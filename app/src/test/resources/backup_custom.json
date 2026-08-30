@@ -1,0 +1,54 @@
+{
+  "format": "private-vault-backup",
+  "version": 1,
+  "exportedAt": 1724000400000,
+  "crypto": {
+    "kdf": "PBKDF2",
+    "hash": "SHA-256",
+    "iterations": 100000,
+    "keyLen": 32,
+    "saltLen": 16,
+    "ivLen": 16,
+    "cipher": "AES-256-CBC",
+    "encoding": "base64"
+  },
+  "data": {
+    "meta": {
+      "saltB64": "itwVfcbtkr4hp513ZXOyMQ==",
+      "verifyB64": "SiZV+zuKhrwiPAFDNGh+o5X85WidLrjFZk+lja37uY0=",
+      "verifyIvB64": "/ySyZxdSoFzMnjsI60lLSg==",
+      "pwdMode": "custom",
+      "initialized": true,
+      "createdAt": 1724000000000,
+      "updatedAt": 1724000000000
+    },
+    "items": [
+      {
+        "_id": "l_fix01abc",
+        "title": "银行账号",
+        "category": "金融",
+        "accountEnc": "ztxUu7kE5YardpxuVNNJ7g==",
+        "accountIv": "rcS+4ph3RZxIzEt3mst7Lg==",
+        "secretEnc": "O5nk1m9PTNZvrgVCFl20SVg3F+nBNeqDgLbL/HSWqvQ=",
+        "secretIv": "BuHGuJx177fBUia+BcCBPQ==",
+        "noteEnc": "z51AId24V2nCEXVxSrXcytCI3SReb1erjcnUim67Mwf/WqthMNiXxtqtSFc8GbMF",
+        "noteIv": "CCylnO2F9CR/C6Sih+rkdA==",
+        "createdAt": 1724000000000,
+        "updatedAt": 1724000100000
+      },
+      {
+        "_id": "l_fix02def",
+        "title": "GitHub",
+        "category": "开发",
+        "accountEnc": "9MsuPkvz07uQgdysLcspoA==",
+        "accountIv": "CwwQ9jhS6qFX+htGoCNhfw==",
+        "secretEnc": "fn3dp9g3x/EuBirIEh2ZNArAmOwdAgW6ZKxnmzikEm4=",
+        "secretIv": "SfO9eaouJYDi5ItC/o28Dw==",
+        "noteEnc": "rL+z57trDU2bFmVKPZ3gtA==",
+        "noteIv": "t2BOXvTgaAOEQIHTOUzmEA==",
+        "createdAt": 1724000200000,
+        "updatedAt": 1724000300000
+      }
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "format": "private-vault-backup",
+  "version": 1,
+  "exportedAt": 1724000700000,
+  "crypto": {
+    "kdf": "PBKDF2",
+    "hash": "SHA-256",
+    "iterations": 100000,
+    "keyLen": 32,
+    "saltLen": 16,
+    "ivLen": 16,
+    "cipher": "AES-256-CBC",
+    "encoding": "base64",
+    "masterRef": "wxb-def-v1"
+  },
+  "data": {
+    "meta": {
+      "saltB64": "1D7gyV5/M9u/8UNLs88ASA==",
+      "verifyB64": "x1O1Xt6DkfSF2h0OYKKfHo5TVnMlI+TTkDGrD4bf3Ds=",
+      "verifyIvB64": "hEmOPzO2imWJ98t3Rwv/5w==",
+      "pwdMode": "default",
+      "initialized": true,
+      "createdAt": 1724000500000,
+      "updatedAt": 1724000500000,
+      "openid": "oX-test-openid-0042"
+    },
+    "items": [
+      {
+        "_id": "l_fix03ghi",
+        "title": "网易邮箱",
+        "category": "邮箱",
+        "accountEnc": "mmLRKnUbE/PKJ5wZA2FkVg==",
+        "accountIv": "xI8Rbyjg0NFHz/EVt4Nhew==",
+        "secretEnc": "KsmPh6BHvOke+UoEqsMO0w==",
+        "secretIv": "BNDpaon45h4jpog9s2NbMw==",
+        "noteEnc": "la3cTRRSuY2ktwMJcTN07kpFbpNAYxSTtM/PyqvKOpk=",
+        "noteIv": "KeOK07CcqosAvFkZQ/9EsQ==",
+        "createdAt": 1724000500000,
+        "updatedAt": 1724000600000
+      }
+    ]
+  }
+}
