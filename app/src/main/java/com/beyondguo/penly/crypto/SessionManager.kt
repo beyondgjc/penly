@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** 未解锁时访问会话密钥抛出 */
-class VaultLockedException(message: String = "密码箱未解锁") : Exception(message)
+class VaultLockedException(message: String = "印迹未解锁") : Exception(message)
 
 /**
  * 会话密钥管理：密钥仅驻内存，锁定即清除。

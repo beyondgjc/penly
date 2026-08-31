@@ -11,7 +11,7 @@ import com.beyondguo.penly.ui.theme.PenlyTheme
 
 /**
  * 单 Activity 宿主。继承 FragmentActivity 以支持 androidx.biometric 的 BiometricPrompt。
- * release 包 FLAG_SECURE：密码箱内容不进系统截图/最近任务预览（debug 放开以便自动化测试）。
+ * release 包 FLAG_SECURE：印迹内容不进系统截图/最近任务预览（debug 放开以便自动化测试）。
  */
 class MainActivity : FragmentActivity() {
 

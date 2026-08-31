@@ -49,7 +49,7 @@ import com.beyondguo.penly.ui.theme.PenText3
 import com.beyondguo.penly.ui.theme.PenText4
 
 /**
- * 密码箱列表（扁平风 v2，参考 MIUI 密码管理）：
+ * 印迹列表（扁平风 v2，参考 MIUI 密码管理）：
  * 大标题 + 圆角搜索框 + 按首字符分组（字母/汉字）+ 字母头像行。
  */
 @Composable
@@ -103,7 +103,7 @@ fun ListScreen(repo: VaultRepository, onOpen: (String) -> Unit, onSettings: () -
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "密码箱",
+                "印迹",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,

@@ -112,7 +112,7 @@ fun ChangePwdScreen(repo: VaultRepository, mode: String, onDone: () -> Unit) {
             ) {
                 Text(
                     if (isSet)
-                        "将为密码箱设置主密码：全部记录会用新密码重新加密，内置默认密码即失效。此后主密码是唯一凭证，遗忘无法找回。"
+                        "将为印迹设置主密码：全部记录会用新密码重新加密，内置默认密码即失效。此后主密码是唯一凭证，遗忘无法找回。"
                     else
                         "修改主密码：所有记录将用新密码重新加密（旧密码用于解密校验），云端/备份文件只会看到密文变化。",
                     style = MaterialTheme.typography.bodySmall,

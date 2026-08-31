@@ -21,7 +21,7 @@ object ImportType {
 data class ImportResult(val type: String, val count: Int)
 
 /**
- * 密码箱业务仓库（对应小程序 services/vault.js + 部分 utils/crypto.js 业务封装）。
+ * 印迹业务仓库（对应小程序 services/vault.js + 部分 utils/crypto.js 业务封装）。
  * 所有读写只接触密文；明文与密钥仅在会话内存中。
  */
 class VaultRepository(private val store: VaultStore) {
@@ -147,7 +147,7 @@ class VaultRepository(private val store: VaultStore) {
         if (newPlain.length < CryptoEngine.MASTER_MIN_LEN) {
             return "主密码至少 ${CryptoEngine.MASTER_MIN_LEN} 位"
         }
-        val m = meta() ?: return "密码箱尚未初始化"
+        val m = meta() ?: return "印迹尚未初始化"
         val oldMaster = oldPlain ?: CryptoEngine.ANDROID_DEFAULT_MASTER
         val oldKey = CryptoEngine.deriveKeyB64(oldMaster, m.saltB64)
         if (!CryptoEngine.verifyMaster(oldKey, m.verifyB64, m.verifyIvB64)) {
@@ -164,7 +164,7 @@ class VaultRepository(private val store: VaultStore) {
         return null
     }
 
-    /** 重置密码箱：清空全部本地数据（忘记主密码场景） */
+    /** 重置印迹：清空全部本地数据（忘记主密码场景） */
     suspend fun resetVault() {
         store.clearAll()
         SessionManager.lock()
@@ -177,7 +177,7 @@ class VaultRepository(private val store: VaultStore) {
      * default 模式导出仅本应用可再解锁（crypto.masterRef 标记），custom 模式导出通用。
      */
     suspend fun exportJson(): String {
-        val m = meta() ?: throw IllegalStateException("密码箱尚未初始化")
+        val m = meta() ?: throw IllegalStateException("印迹尚未初始化")
         val masterRef = if (m.pwdMode == VaultMeta.MODE_DEFAULT) CryptoEngine.MASTER_REF_ANDROID else null
         val file = BackupFile(
             format = BackupCodec.FORMAT,
