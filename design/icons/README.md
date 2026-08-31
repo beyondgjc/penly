@@ -3,6 +3,15 @@
 > 6 款矢量图标，统一套用品牌绿 `#07C160` 与 v2 扁平风，圆角 224/1024（≈22%）。
 > 矢量源文件为 SVG，可无损缩放至任意分辨率（含 App Store 1024px、Android xxxhdpi 192px、Favicon 等）。
 
+## ✅ 已采用方案
+
+**方案 6（指纹）** 已选定并落地到 Android 工程：
+
+- 自适应图标（minSdk 29 主要走这条）：`mipmap-anydpi/ic_launcher.xml` + `mipmap-anydpi/ic_launcher_round.xml` → `drawable/ic_launcher_background.xml`（品牌绿底）+ `drawable/ic_launcher_foreground.xml`（白色指纹）
+- 传统密度图标（v25 兜底）：`mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher{,_round}.png` 已全部替换为指纹 PNG（旧的默认绿网 webp 已移除）
+- 全套位图导出（Android / 商店 / 小程序 / iOS）见 `export/`，含 `render_icons_node.js` 渲染脚本（基于 `@resvg/resvg-js`，纯二进制、无系统依赖）
+- 合成源：`penly-icon-6-composite.svg`（绿底圆角 + 白指纹，用于位图导出）
+
 ## 方案一览
 
 | 编号 | 文件 | 视觉 | 适用调性 |
