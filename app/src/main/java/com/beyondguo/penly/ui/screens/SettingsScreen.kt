@@ -266,21 +266,8 @@ fun SettingsScreen(
                 )
                 SettingRow(
                     title = "导入数据",
-                    subtitle = "从备份 JSON 覆盖本机数据",
+                    subtitle = "从备份文件覆盖本机数据",
                     onClick = { importLauncher.launch("*/*") },
-                )
-                SettingRow(
-                    title = "粘贴导入",
-                    subtitle = "从剪贴板读取备份内容（文件选择器被系统拦截时可用）",
-                    onClick = {
-                        val cm = context.getSystemService(android.content.ClipboardManager::class.java)
-                        val text = cm.primaryClip?.getItemAt(0)?.text?.toString()
-                        if (text.isNullOrBlank()) {
-                            showToast("剪贴板为空，请先复制备份内容")
-                        } else {
-                            pendingImport = text
-                        }
-                    },
                 )
                 SettingRow(
                     title = "重置密码箱",
