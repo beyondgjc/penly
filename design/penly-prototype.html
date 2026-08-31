@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>私密密码箱 Penly · 交互原型（v2 扁平风）</title>
+<style>
+  :root{
+    --brand:#07C160; --brand-dark:#06B154; --brand-soft:#E6F9EF;
+    --danger:#FF5B5B; --danger-soft:#FFEDED; --warn:#FF9500; --info:#576B95;
+    --bg:#FFFFFF; --bg-soft:#F2F3F5; --surface:#FFFFFF;
+    --t1:#1A1D24; --t2:#2B2F36; --t3:#8A909C; --t4:#B6BCC6;
+    --line:rgba(17,24,39,.06);
+    --f:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",Roboto,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{font-family:var(--f);background:#E9EAED;display:flex;justify-content:center;align-items:flex-start;min-height:100vh;padding:24px}
+  .phone{width:360px;height:800px;background:var(--bg);border-radius:36px;box-shadow:0 20px 60px rgba(0,0,0,.18);overflow:hidden;position:relative;display:flex;flex-direction:column}
+  .statusbar{height:34px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-size:13px;font-weight:600;color:var(--t1);flex:0 0 auto}
+  .statusbar .dots{display:flex;gap:4px}
+  .statusbar .dots i{width:6px;height:6px;border-radius:50%;background:var(--t1);display:block}
+  .screen{position:absolute;left:0;top:34px;right:0;bottom:0;background:var(--bg);display:none;flex-direction:column;overflow:hidden}
+  .screen.active{display:flex}
+  .scroll{overflow-y:auto;flex:1}
+  .scroll::-webkit-scrollbar{display:none}
+
+  /* top bars */
+  .bar{display:flex;align-items:center;padding:6px 8px;flex:0 0 auto}
+  .bar .ico{width:44px;height:44px;display:flex;align-items:center;justify-content:center;border:none;background:none;cursor:pointer;color:var(--t1)}
+  .bar .ico svg{width:24px;height:24px;fill:currentColor}
+  .bar .title{flex:1;text-align:center;font-size:17px;font-weight:600;color:var(--t1)}
+  .bar .title.left{text-align:left;padding-left:8px;font-size:28px;font-weight:700}
+  .bar .spacer{flex:1}
+
+  /* lock / onboarding centered */
+  .center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;text-align:center}
+  .shield{width:76px;height:76px;border-radius:20px;background:var(--brand-soft);display:flex;align-items:center;justify-content:center;color:var(--brand)}
+  .shield svg{width:44px;height:44px;fill:currentColor}
+  .big-title{font-size:22px;font-weight:700;color:var(--t1);margin-top:14px}
+  .sub{font-size:12px;color:var(--t3);margin-top:6px}
+  .warn-pill{font-size:12px;color:var(--warn);margin-top:20px}
+
+  /* buttons */
+  .btn{width:100%;height:52px;border:none;border-radius:20px;font-size:16px;font-weight:600;cursor:pointer;font-family:var(--f)}
+  .btn-primary{background:var(--brand);color:#fff}
+  .btn-primary:active{background:var(--brand-dark)}
+  .btn-outline{background:#fff;color:var(--brand);border:1.5px solid var(--brand)}
+  .btn-danger{background:var(--danger-soft);color:var(--danger)}
+  .btn-tonal{background:var(--bg-soft);color:var(--brand);display:flex;align-items:center;justify-content:center;gap:8px}
+  .btn-tonal svg{width:22px;height:22px;fill:currentColor}
+  .mt12{margin-top:12px}.mt16{margin-top:16px}.mt28{margin-top:28px}
+
+  /* inputs */
+  .field{width:100%;height:52px;border:1.5px solid var(--t4);border-radius:14px;padding:0 16px;font-size:16px;color:var(--t1);font-family:var(--f);background:#fff}
+  .field:focus{outline:none;border-color:var(--brand)}
+  .search{width:100%;height:44px;border:none;border-radius:22px;background:var(--bg-soft);padding:0 16px 0 44px;font-size:16px;color:var(--t1);font-family:var(--f);position:relative}
+  .search-wrap{position:relative;padding:0 20px}
+  .search-wrap svg{position:absolute;left:36px;top:50%;transform:translateY(-50%);width:20px;height:20px;fill:var(--t3)}
+  .ph{color:var(--t3)}
+
+  /* chips */
+  .chips{display:flex;gap:8px;padding:12px 20px;overflow-x:auto}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;padding:7px 14px;border-radius:16px;background:var(--bg-soft);font-size:13px;color:var(--t2);border:none;cursor:pointer;font-family:var(--f)}
+  .chip.on{background:var(--brand-soft);color:var(--brand-dark);font-weight:600}
+
+  /* list */
+  .group{font-size:13px;color:var(--t3);padding:8px 20px}
+  .row{display:flex;align-items:center;padding:10px 20px;gap:14px;cursor:pointer}
+  .row:active{background:var(--bg-soft)}
+  .avatar{width:44px;height:44px;border-radius:14px;background:var(--brand-soft);color:var(--brand-dark);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:18px;flex:0 0 auto}
+  .row .meta{flex:1;min-width:0}
+  .row .meta .n{font-size:16px;font-weight:500;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .meta .a{font-size:12px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--t3);gap:12px;padding-bottom:80px}
+  .empty svg{width:64px;height:64px;fill:var(--t4)}
+
+  /* FAB */
+  .fab{position:absolute;right:8px;bottom:36px;width:56px;height:56px;border-radius:16px;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 16px rgba(7,193,96,.35);z-index:5}
+  .fab svg{width:26px;height:26px;fill:#fff}
+
+  /* detail */
+  .detail-head{display:flex;align-items:center;gap:16px;padding:10px 0}
+  .detail-head .avatar{width:56px;height:56px;border-radius:18px;font-size:24px}
+  .detail-head .name{font-size:17px;font-weight:600;color:var(--t1)}
+  .detail-head .upd{font-size:12px;color:var(--t3);margin-top:2px}
+  .cat{display:inline-block;font-size:12px;color:var(--brand);background:var(--brand-soft);padding:3px 10px;border-radius:10px;margin:4px 0 6px}
+  .vrow{display:flex;align-items:center;padding:18px 0;border-top:1px solid var(--line);cursor:pointer}
+  .vrow .l{font-size:16px;font-weight:500;color:var(--t1)}
+  .vrow .v{flex:1;text-align:right;font-size:16px;color:var(--t1);padding-left:12px}
+  .vrow .v.mask{letter-spacing:2px;color:var(--t1)}
+  .vrow .v.empty{color:var(--t3)}
+  .note-label{font-size:14px;color:var(--t3);margin-top:14px}
+  .note-body{font-size:16px;color:var(--t1);margin-top:6px;line-height:1.5}
+
+  /* settings */
+  .scard{background:var(--bg-soft);border-radius:12px;margin:0 16px;overflow:hidden}
+  .srow{display:flex;align-items:center;padding:14px 16px;gap:12px;cursor:pointer}
+  .srow + .srow{border-top:1px solid var(--line)}
+  .srow .st{flex:1}
+  .srow .st .tt{font-size:16px;color:var(--t1)}
+  .srow .st .tt.danger{color:var(--danger)}
+  .srow .st .ss{font-size:12px;color:var(--t3);margin-top:2px}
+  .srow .arrow{color:var(--t4)}
+  .sec{font-size:12px;color:var(--t3);padding:16px 16px 6px}
+  .key-ico{width:40px;height:40px;border-radius:10px;background:var(--brand-soft);color:var(--brand);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .key-ico svg{width:22px;height:22px;fill:currentColor}
+  .switch{width:46px;height:28px;border-radius:14px;background:var(--brand);position:relative;flex:0 0 auto;cursor:pointer}
+  .switch.off{background:var(--t4)}
+  .switch i{position:absolute;top:3px;right:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:.2s}
+  .switch.off i{right:21px}
+  .footer{text-align:center;font-size:12px;color:var(--t3);padding:16px 24px 24px}
+  .info-card{background:var(--surface);border-radius:12px;padding:14px;font-size:12px;color:var(--info);margin:0 16px}
+
+  /* edit */
+  .hero{display:flex;align-items:center;gap:16px;padding:10px 20px}
+  .hero .avatar{width:52px;height:52px;border-radius:17px;font-size:22px}
+  .hero input{flex:1;border:none;font-size:17px;font-weight:600;color:var(--t1);font-family:var(--f);outline:none}
+  .hero input::placeholder{color:var(--t3);font-weight:600}
+  .flat{display:flex;align-items:center;padding:16px 20px;gap:16px;border-top:1px solid var(--line)}
+  .flat .lab{font-size:16px;font-weight:500;color:var(--t1);flex:0 0 auto}
+  .flat input{flex:1;border:none;text-align:right;font-size:16px;color:var(--t1);font-family:var(--f);outline:none}
+  .flat input::placeholder{color:var(--t3);text-align:right}
+  .note-block{padding:14px 20px}
+  .note-block .nl{font-size:16px;font-weight:500;color:var(--t1)}
+  .note-block textarea{width:100%;border:none;font-family:var(--f);font-size:16px;color:var(--t1);margin-top:6px;resize:none;height:80px;outline:none}
+  .note-block textarea::placeholder{color:var(--t3)}
+  .edit-pad{padding:24px 20px 40px}
+
+  /* toast */
+  .toast{position:absolute;left:50%;bottom:90px;transform:translateX(-50%);background:rgba(26,29,36,.9);color:#fff;font-size:13px;padding:10px 18px;border-radius:20px;opacity:0;transition:.2s;pointer-events:none;z-index:9}
+  .toast.show{opacity:1}
+  .hint{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);font-size:12px;color:#888;background:#fff;padding:6px 12px;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.1)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>9:41</span><span class="dots"><i></i><i></i><i></i></span></div>
+
+  <!-- LOCK -->
+  <section class="screen active" id="s-lock">
+    <div class="center">
+      <div class="shield"><svg viewBox="0 0 24 24"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg></div>
+      <div class="big-title">私密密码箱</div>
+      <div class="sub">端到端加密 · 明文不出本机</div>
+      <div class="warn-pill">默认保护模式 · 未设主密码</div>
+      <button class="btn btn-primary mt28" onclick="go('s-list')">轻触进入</button>
+      <button class="btn btn-tonal mt12" onclick="toast('已发起指纹验证')"><svg viewBox="0 0 24 24"><path d="M17.81 4.47c-.08 0-.16-.02-.23-.06-.78-.42-1.6-.6-2.43-.6-2.11 0-4.05.78-5.53 2.08-.4.36-.43.98-.07 1.38.36.4.98.43 1.38.07.98-.88 2.26-1.37 3.6-1.37.86 0 1.69.18 2.45.53.38.17.82 0 1-.38.17-.38 0-.82-.38-1-.5-.24-1.04-.36-1.59-.36-.78 0-1.55.18-2.24.53l1.13 1.13c.35.35.35.92 0 1.27-.18.18-.41.26-.64.26s-.46-.08-.63-.24l-2.13-2.13c-.78-.78-1.21-1.82-1.21-2.93 0-1.1.43-2.14 1.21-2.93C9.34 3.78 11.28 3 13.15 3c.9 0 1.78.18 2.6.53.4.17.82-.01 1-.41.17-.4-.01-.82-.41-1z"/></svg>指纹解锁</button>
+    </div>
+    <div class="footer" style="position:absolute;bottom:24px;left:0;right:0" onclick="toast('重置流程演示')">忘记主密码？重置密码箱</div>
+  </section>
+
+  <!-- LIST -->
+  <section class="screen" id="s-list">
+    <div class="bar"><div class="title left">密码箱</div><div class="spacer"></div><div class="ico" onclick="go('s-settings')"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.03 7.03 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.74 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.43.34.69.22l2.39-.96c.49.38 1.03.7 1.62.94l.36 2.54c.05.24.25.42.5.42h3.84c.25 0 .45-.18.5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.26.12.55.02.69-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg></div></div>
+    <div class="scroll">
+      <div class="search-wrap"><svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 5 1.5-1.5-5-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg><input class="search ph" value="搜索" /></div>
+      <div class="chips"><button class="chip on">全部</button><button class="chip">社交</button><button class="chip">金融</button><button class="chip">工作</button></div>
+      <div class="group">B</div>
+      <div class="row" onclick="openDetail('哔哩哔哩','bili@example.com')"><div class="avatar">B</div><div class="meta"><div class="n">哔哩哔哩</div><div class="a">bili@example.com</div></div></div>
+      <div class="group">G</div>
+      <div class="row" onclick="openDetail('GitHub','beyondgjc')"><div class="avatar">G</div><div class="meta"><div class="n">GitHub</div><div class="a">beyondgjc</div></div></div>
+      <div class="group">W</div>
+      <div class="row" onclick="openDetail('微博','weibo_01')"><div class="avatar">W</div><div class="meta"><div class="n">微博</div><div class="a">weibo_01</div></div></div>
+      <div class="group">支</div>
+      <div class="row" onclick="openDetail('支付宝','138****8888')"><div class="avatar">支</div><div class="meta"><div class="n">支付宝</div><div class="a">138****8888</div></div></div>
+    </div>
+    <div class="fab" onclick="go('s-edit')"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></div>
+  </section>
+
+  <!-- DETAIL -->
+  <section class="screen" id="s-detail">
+    <div class="bar"><div class="ico" onclick="go('s-list')"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/></svg></div><div class="spacer"></div><div class="ico" onclick="go('s-edit')"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></div></div>
+    <div class="scroll" style="padding:0 20px">
+      <div class="big-title" style="margin:4px 0 18px">密码详情</div>
+      <div class="detail-head"><div class="avatar" id="d-av">G</div><div><div class="name" id="d-name">GitHub</div><div class="upd">上次修改：2026-08-30 21:14</div></div></div>
+      <div class="cat" id="d-cat">默认</div>
+      <div class="vrow" onclick="copy('账号')"><div class="l">账号</div><div class="v" id="d-account">beyondgjc</div></div>
+      <div class="vrow" onclick="revealPwd()"><div class="l">密码</div><div class="v mask" id="d-secret">••••••••••</div></div>
+      <div id="d-note-wrap" style="display:none"><div class="note-label">备注</div><div class="note-body" id="d-note"></div></div>
+      <div style="height:110px"></div>
+    </div>
+  </section>
+
+  <!-- EDIT -->
+  <section class="screen" id="s-edit">
+    <div class="bar"><div class="ico" onclick="go('s-list')"><svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></div><div class="title">新增记录</div><div class="ico" onclick="toast('已保存')"><svg viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div></div>
+    <div class="scroll">
+      <div class="hero"><div class="avatar">密</div><input placeholder="名称" value="" id="e-name" oninput="syncAvatar('e-name','e-av')" /><div class="avatar" id="e-av" style="display:none"></div></div>
+      <div class="flat"><div class="lab">账号</div><input placeholder="请输入账号" /></div>
+      <div class="flat"><div class="lab">密码</div><input placeholder="请输入密码" type="password" value="123456" /></div>
+      <div class="flat"><div class="lab">分类</div><input placeholder="默认" /></div>
+      <div class="note-block"><div class="nl">备注</div><textarea placeholder="补充说明…"></textarea></div>
+      <div class="edit-pad"><button class="btn btn-danger" onclick="toast('删除确认演示')">删除记录</button><div style="height:40px"></div></div>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="screen" id="s-settings">
+    <div class="bar"><div class="ico" onclick="go('s-list')"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/></svg></div><div class="title">我的</div><div class="spacer"></div></div>
+    <div class="scroll">
+      <div class="scard" style="margin-top:8px">
+        <div class="srow"><div class="key-ico"><svg viewBox="0 0 24 24"><path d="M21 21H3v-2h18v2zM5 12V7a7 7 0 0 1 14 0v5H5zm2 0h10V7a5 5 0 0 0-10 0v5z"/></svg></div><div class="st"><div class="tt">默认保护（未设主密码）</div><div class="ss" style="color:var(--warn)">当前使用内置默认密码，数据未受强保护，建议设置主密码</div></div></div>
+        <button class="btn btn-primary" style="margin:0 16px 16px" onclick="go('s-change')">设置主密码（推荐）</button>
+      </div>
+      <div class="sec">安全</div>
+      <div class="scard"><div class="srow"><div class="st"><div class="tt">立即锁定</div><div class="ss">清除内存密钥，回到锁屏</div></div></div><div class="srow"><div class="st"><div class="tt">指纹解锁</div><div class="ss">默认保护下指纹仅作为进入验证</div></div><div class="switch" onclick="this.classList.toggle('off')"><i></i></div></div></div>
+      <div class="sec">数据</div>
+      <div class="scard"><div class="srow" onclick="go('s-change')"><div class="st"><div class="tt">修改主密码</div><div class="ss">从默认保护升级为主密码</div></div><div class="arrow">›</div></div><div class="srow"><div class="st"><div class="tt">导出数据</div><div class="ss">保存加密备份 JSON 到下载目录</div></div><div class="arrow">›</div></div><div class="srow"><div class="st"><div class="tt">导入数据</div><div class="ss">从备份文件覆盖本机数据</div></div><div class="arrow">›</div></div><div class="srow"><div class="st"><div class="tt danger">重置密码箱</div><div class="ss">删除本机全部数据，不可恢复</div></div><div class="arrow">›</div></div></div>
+      <div class="sec">关于</div>
+      <div class="scard"><div class="srow" onclick="toast('端到端加密说明')"><div class="st"><div class="tt">加密说明</div></div><div class="arrow">›</div></div><div class="srow"><div class="st"><div class="tt">版本</div></div><div class="ss">1.0.0</div></div></div>
+      <div class="footer">私密密码箱 · 端到端加密，密钥不出本机</div>
+    </div>
+  </section>
+
+  <!-- CHANGE PWD -->
+  <section class="screen" id="s-change">
+    <div class="bar"><div class="ico" onclick="go('s-settings')"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/></svg></div><div class="title">设置主密码</div><div class="spacer"></div></div>
+    <div class="scroll" style="padding:16px">
+      <div class="info-card">将为密码箱设置主密码：全部记录会用新密码重新加密，内置默认密码即失效。此后主密码是唯一凭证，遗忘无法找回。</div>
+      <div style="height:16px"></div>
+      <input class="field" placeholder="新主密码（至少 8 位）" type="password" />
+      <div style="height:12px"></div>
+      <input class="field" placeholder="确认新主密码" type="password" />
+      <div style="height:20px"></div>
+      <button class="btn btn-primary" onclick="toast('主密码已更新')">设置主密码</button>
+    </div>
+  </section>
+
+  <div class="toast" id="toast"></div>
+</div>
+<div class="hint">HTML 原型 · 点击列表项/按钮体验跳转（非真实数据）</div>
+
+<script>
+  function go(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));document.getElementById(id).classList.add('active');}
+  function openDetail(name,account){
+    document.getElementById('d-name').textContent=name;
+    document.getElementById('d-account').textContent=account;
+    document.getElementById('d-av').textContent=name.trim().charAt(0).toUpperCase();
+    document.getElementById('d-secret').textContent='••••••••••';
+    document.getElementById('d-secret').classList.add('mask');
+    document.getElementById('d-note-wrap').style.display='none';
+    go('s-detail');
+  }
+  function revealPwd(){const el=document.getElementById('d-secret');el.classList.remove('mask');el.textContent='MyS3cret!2026';toast('密码已复制');}
+  function copy(t){toast(t+'已复制');}
+  function syncAvatar(srcId,avId){const v=document.getElementById(srcId).value.trim();const av=document.getElementById(avId);if(v){av.style.display='flex';av.textContent=v.charAt(0).toUpperCase();}else{av.style.display='none';}}
+  let tt;function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),1400);}
+  document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');});
+</script>
+</body>
+</html>

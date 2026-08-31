@@ -1,0 +1,54 @@
+{
+  "$schema": "https://design-tokens.org/schema.json",
+  "color": {
+    "brand": { "$type": "color", "$value": "#07C160", "$description": "PenGreen 主色" },
+    "brand.dark": { "$type": "color", "$value": "#06B154", "$description": "PenGreenDark 按压/头像字" },
+    "brand.soft": { "$type": "color", "$value": "#E6F9EF", "$description": "PenGreenSoft 浅底" },
+    "danger": { "$type": "color", "$value": "#FF5B5B", "$description": "PenDanger 危险" },
+    "danger.soft": { "$type": "color", "$value": "#FFEDED", "$description": "PenDangerSoft 危险底" },
+    "warn": { "$type": "color", "$value": "#FF9500", "$description": "PenWarn 警示" },
+    "info": { "$type": "color", "$value": "#576B95", "$description": "PenInfo 次级信息" },
+    "bg": { "$type": "color", "$value": "#FFFFFF", "$description": "PenBg 页面背景" },
+    "bg.soft": { "$type": "color", "$value": "#F2F3F5", "$description": "PenBgSoft 浅灰底" },
+    "surface": { "$type": "color", "$value": "#FFFFFF", "$description": "PenCard 卡片表面" },
+    "text.1": { "$type": "color", "$value": "#1A1D24", "$description": "PenText1 标题" },
+    "text.2": { "$type": "color", "$value": "#2B2F36", "$description": "PenText2 正文" },
+    "text.3": { "$type": "color", "$value": "#8A909C", "$description": "PenText3 次级" },
+    "text.4": { "$type": "color", "$value": "#B6BCC6", "$description": "PenText4 描边/禁用" },
+    "line": { "$type": "color", "$value": "#1118270F", "$description": "PenLine 分隔线 #111827 @6%" }
+  },
+  "dimension": {
+    "space.1": { "$type": "dimension", "$value": "4dp" },
+    "space.2": { "$type": "dimension", "$value": "8dp" },
+    "space.3": { "$type": "dimension", "$value": "12dp" },
+    "space.4": { "$type": "dimension", "$value": "16dp" },
+    "space.5": { "$type": "dimension", "$value": "20dp", "$description": "主屏横内边距" },
+    "space.6": { "$type": "dimension", "$value": "24dp" },
+    "space.7": { "$type": "dimension", "$value": "28dp" },
+    "space.8": { "$type": "dimension", "$value": "36dp" },
+    "space.10": { "$type": "dimension", "$value": "40dp" },
+    "btn.height": { "$type": "dimension", "$value": "52dp" },
+    "btn.height.sm": { "$type": "dimension", "$value": "50dp" },
+    "row.vault.padY": { "$type": "dimension", "$value": "10dp" },
+    "row.value.padY": { "$type": "dimension", "$value": "18dp" },
+    "row.setting.padY": { "$type": "dimension", "$value": "14dp" },
+    "row.flat.padY": { "$type": "dimension", "$value": "16dp" },
+    "avatar.size": { "$type": "dimension", "$value": "44dp" }
+  },
+  "borderRadius": {
+    "full": { "$type": "borderRadius", "$value": "999dp" },
+    "avatar": { "$type": "borderRadius", "$value": "14dp", "$description": "≈ size/3（44→14）" },
+    "btn": { "$type": "borderRadius", "$value": "20dp" },
+    "card": { "$type": "borderRadius", "$value": "12dp" },
+    "delete": { "$type": "borderRadius", "$value": "14dp" }
+  },
+  "typography": {
+    "display": { "$type": "typography", "$value": { "fontFamily": "System Sans", "fontSize": "28dp", "fontWeight": "700", "lineHeight": "35dp", "color": "{color.text.1}" } },
+    "title.lg": { "$type": "typography", "$value": { "fontFamily": "System Sans", "fontSize": "22dp", "fontWeight": "700", "lineHeight": "28dp", "color": "{color.text.1}" } },
+    "title.md": { "$type": "typography", "$value": { "fontFamily": "System Sans", "fontSize": "17dp", "fontWeight": "600", "lineHeight": "22dp", "color": "{color.text.1}" } },
+    "body.lg": { "$type": "typography", "$value": { "fontFamily": "System Sans", "fontSize": "16dp", "fontWeight": "400", "lineHeight": "24dp", "color": "{color.text.2}" } },
+    "body.md": { "$type": "typography", "$value": { "fontFamily": "System Sans", "fontSize": "14dp", "fontWeight": "400", "lineHeight": "21dp", "color": "{color.text.2}" } },
+    "body.sm": { "$type": "typography", "$value": { "fontFamily": "System Sans", "fontSize": "12dp", "fontWeight": "400", "lineHeight": "18dp", "color": "{color.text.3}" } },
+    "group": { "$type": "typography", "$value": { "fontFamily": "System Sans", "fontSize": "13dp", "fontWeight": "400", "lineHeight": "18dp", "color": "{color.text.3}" } }
+  }
+}
