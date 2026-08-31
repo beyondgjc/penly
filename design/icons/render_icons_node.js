@@ -1,12 +1,12 @@
 // 用 @resvg/resvg-js（预编译原生二进制，无需系统级 cairo/imagemagick）
-// 把完整合成图标 penly-icon-6-composite.svg 渲染为各平台/分辨率 PNG。
+// 把完整合成图标 yinji-icon-6-composite.svg 渲染为各平台/分辨率 PNG。
 // 与 render_icons.py 输出目标一致，作为无 reportlab cairo 后端时的替代渲染管线。
 const fs = require("fs");
 const path = require("path");
 const { Resvg } = require("C:/Users/beyondguo/.workbuddy/binaries/node/workspace/node_modules/@resvg/resvg-js");
 
 const HERE = __dirname;
-const SRC = path.join(HERE, "penly-icon-6-composite.svg");
+const SRC = path.join(HERE, "yinji-icon-6-composite.svg");
 
 // [子目录, 文件名, 边长px]
 const TARGETS = [

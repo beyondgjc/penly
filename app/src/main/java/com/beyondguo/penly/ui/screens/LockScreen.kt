@@ -123,7 +123,7 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
     ) {
         Icon(Icons.Filled.Lock, contentDescription = null, tint = PenGreen, modifier = Modifier.size(76.dp))
         Spacer(Modifier.height(14.dp))
-        Text("私密密码箱", style = MaterialTheme.typography.titleLarge)
+        Text("印迹", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(28.dp))
 
         if (meta?.pwdMode == VaultMeta.MODE_DEFAULT) {
@@ -183,12 +183,12 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
         }
 
         Spacer(Modifier.height(36.dp))
-        TextButton(onClick = { showReset = true }) { Text("忘记主密码？重置密码箱", color = PenDanger) }
+        TextButton(onClick = { showReset = true }) { Text("忘记主密码？重置印迹", color = PenDanger) }
     }
 
     if (showReset) {
         ConfirmDialog(
-            title = "重置密码箱",
+            title = "重置印迹",
             text = "将删除本机所有密码数据，且无法恢复。确定要继续吗？",
             confirmText = "重置",
             danger = true,

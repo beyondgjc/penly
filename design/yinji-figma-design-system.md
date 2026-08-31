@@ -1,6 +1,6 @@
-# 私密密码箱（Penly）· Figma 设计稿 / 设计系统规范
+# 印迹（印迹）· Figma 设计稿 / 设计系统规范
 
-> 适用版本：penly Android v1.0.0（代码态为「v2 扁平风」）
+> 适用版本：印迹 Android v1.0.0（代码态为「v2 扁平风」）
 > 用途：作为 Figma 设计源文件蓝图，支撑后续迭代与 Android / iOS / HarmonyOS / 微信小程序 多端对齐
 > 数据来源：全部尺寸、配色、字号取自 `android/app/.../ui/theme/*` 与 7 个 Screen 源码，非主观设定
 
@@ -10,7 +10,7 @@
 
 | Page | 内容 |
 |---|---|
-| 🎨 Tokens | 颜色 / 字号 / 间距 / 圆角 / 投影 变量（由 `penly-design-tokens.json` 导入） |
+| 🎨 Tokens | 颜色 / 字号 / 间距 / 圆角 / 投影 变量（由 `yinji-design-tokens.json` 导入） |
 | 🧩 Components | 按钮、输入框、卡片、列表行、字母头像、顶栏、FAB、搜索框、Chip、开关、对话框、空状态 |
 | 📱 Screens | 引导 / 锁屏 / 列表 / 详情 / 编辑 / 我的 / 改密（各 1 个 Frame，含主要状态） |
 | 🔁 Multi-Platform | 跨端差异说明与共用 Token 对照（见第 5 节） |
@@ -123,7 +123,7 @@
 - **通用 Card**：底 `surface`，用于引导/改密信息卡
 
 ### 2.4 列表行 Row
-- **VaultRow（密码箱列表项）**：横内边距 20 / 纵 10；左 `MonogramAvatar(44)` + 间距 14 + 右侧（标题 `body-lg` Medium `text.1` 单行省略；副标题账号 `body-sm` `text.3`）
+- **VaultRow（印迹列表项）**：横内边距 20 / 纵 10；左 `MonogramAvatar(44)` + 间距 14 + 右侧（标题 `body-lg` Medium `text.1` 单行省略；副标题账号 `body-sm` `text.3`）
 - **ValueRow（详情信息行）**：纵内边距 18；左标签 `body-lg` Medium `text.1`，右值 `body-lg`（空值显 `text.3`）；点击整行复制
 - **SettingRow（我的列表项）**：横内边距 16 / 纵 14；左标题 `body-lg`（危险态 `danger`）+ 副标题 `body-sm` `text.3`，右侧 trailing（Switch/文字）
 
@@ -132,7 +132,7 @@
 - 常用尺寸：40（默认）/ 44（列表）/ 52（编辑）/ 56（详情）
 
 ### 2.6 顶部栏 Top Bar
-- **列表页自定义栏**：无系统 TopAppBar；左侧大标题「密码箱」28sp Bold，右侧 `Settings` 图标（`text.3`）→ 我的
+- **列表页自定义栏**：无系统 TopAppBar；左侧大标题「印迹」28sp Bold，右侧 `Settings` 图标（`text.3`）→ 我的
 - **标准 TopAppBar（我的/改密）**：左返回箭头，居中标题（「我的」/「设置主密码」/「修改主密码」），底 `bg`，无阴影
 - **编辑页自定义栏**：左 `Close` 图标，居中标题「新增/编辑记录」17sp SemiBold，右 `Check` 图标（`brand`，busy 时变灰）
 
@@ -153,21 +153,21 @@
 
 ### 3.1 引导 Onboarding（未初始化首屏）
 - 居中布局，外边距 28
-- 盾牌图标 84dp `brand` → 标题「私密密码箱」22sp Bold → 副标题「端到端加密 · 明文不出本机」12sp `text.3`
+- 盾牌图标 84dp `brand` → 标题「印迹」22sp Bold → 副标题「端到端加密 · 明文不出本机」12sp `text.3`
 - 信息卡（Card，内边距 16）：标题「两种开始方式」17sp + 说明 12sp `text.2`
 - 主按钮「快速开始（默认保护）」52dp 全宽；次按钮「设置主密码」52dp
 - 展开「设置主密码」态：两个密码 OutlinedTextField（主密码/确认，≥8 位）+ 错误 12sp `danger` + 主按钮「创建并进入」+ 文字按钮「返回」
 
 ### 3.2 锁屏 Lock
 - 居中，外边距 28
-- 锁图标 76dp `brand` → 标题「私密密码箱」22sp Bold → 间距 28
+- 锁图标 76dp `brand` → 标题「印迹」22sp Bold → 间距 28
 - **默认模式**：提示「默认保护模式 · 未设主密码」12sp `warn` → 主按钮「轻触进入」52dp
 - **主密码模式**：OutlinedTextField「主密码」（圆点掩码）→ 主按钮「解锁」52dp
 - 指纹可用时：`FilledTonalButton`「指纹解锁」52dp（图标+文字）
-- 错误 12sp `danger`；底部文字按钮「忘记主密码？重置密码箱」`danger`
+- 错误 12sp `danger`；底部文字按钮「忘记主密码？重置印迹」`danger`
 
 ### 3.3 列表 List（主页）
-- 顶栏：上下 8 间距，左大标题「密码箱」28sp Bold + 右 `Settings` 图标
+- 顶栏：上下 8 间距，左大标题「印迹」28sp Bold + 右 `Settings` 图标
 - 搜索框（圆形，bg.soft，无边框），横内边距 20
 - 分类 FilterChip 横向滚动（间距 8，内边距 20）
 - 分组列表：组头 13sp `text.3`（横内边距 20，纵 8）；每项 `VaultRow`
@@ -193,9 +193,9 @@
 - 标准 TopAppBar「我的」+ 返回
 - 状态卡（SettingCard）：钥匙图标 `brand` + 标题（默认/主密码保护）+ 副标题（默认态 `warn`）；默认态含主按钮「设置主密码（推荐）」
 - SectionTitle「安全」→ SettingCard：立即锁定 / 指纹解锁(Switch)
-- SectionTitle「数据」→ SettingCard：修改主密码 / 导出数据 / 导入数据 / 重置密码箱(danger)
+- SectionTitle「数据」→ SettingCard：修改主密码 / 导出数据 / 导入数据 / 重置印迹(danger)
 - SectionTitle「关于」→ SettingCard：加密说明 / 版本「1.0.0」
-- 底部居中声明「私密密码箱 · 端到端加密，密钥不出本机」12sp `text.3`
+- 底部居中声明「印迹 · 端到端加密，密钥不出本机」12sp `text.3`
 
 ### 3.7 改密 ChangePwd（set / change）
 - 标准 TopAppBar（「设置主密码」/「修改主密码」）+ 返回
@@ -216,9 +216,9 @@
 
 ## 5. 多端对齐映射（Multi-Platform Parity）
 
-penly Android 的 Token **已与微信小程序 `app.wxss` 设计变量对齐**（见 `Color.kt` 注释）。跨端原则：**共用同一套 Hex Token，仅布局容器因平台规范而异**。
+印迹 Android 的 Token **已与微信小程序 `app.wxss` 设计变量对齐**（见 `Color.kt` 注释）。跨端原则：**共用同一套 Hex Token，仅布局容器因平台规范而异**。
 
-| 维度 | Android (penly) | 微信小程序 | iOS | HarmonyOS |
+| 维度 | Android (印迹) | 微信小程序 | iOS | HarmonyOS |
 |---|---|---|---|---|
 | 主色 / 文本灰阶 | 本表 Token | 同（已对齐） | 复用同 Hex | 复用同 Hex |
 | 导航容器 | 列表页「我的」图标入口（无底部 Tab） | 微信 TabBar（外壳独有） | 底部 Tab / 我的入口均可 | 底部 Tab（参考 MIUI） |
@@ -231,10 +231,10 @@ penly Android 的 Token **已与微信小程序 `app.wxss` 设计变量对齐**�
 ---
 
 ## 6. 交付与下一步
-1. 用 `penly-design-tokens.json` 在 Figma 通过 **Tokens Studio / 变量导入** 生成 Color / Number / String 变量。
+1. 用 `yinji-design-tokens.json` 在 Figma 通过 **Tokens Studio / 变量导入** 生成 Color / Number / String 变量。
 2. 按第 2 节在 🧩 Components 页搭组件（建议用 Figma 变体 Variants 表达按钮/输入状态）。
 3. 按第 3 节在 📱 Screens 页逐屏还原（可先锁屏 + 列表 + 详情 + 编辑 4 个主流程）。
 4. 多端评审时对照第 5 节映射表，确认 Token 一致、无明显布局漂移。
 5. 后续迭代：新增屏幕/组件 → 先补 Token → 再建组件 → 再入屏，保持「设计系统优先」。
 
-> 注：本规范与 `android/` 源码 1:1 对应，代码改动后需同步此处（建议将本文件与 `penly-design-tokens.json` 纳入仓库 `design/` 目录共同版本管理）。
+> 注：本规范与 `android/` 源码 1:1 对应，代码改动后需同步此处（建议将本文件与 `yinji-design-tokens.json` 纳入仓库 `design/` 目录共同版本管理）。

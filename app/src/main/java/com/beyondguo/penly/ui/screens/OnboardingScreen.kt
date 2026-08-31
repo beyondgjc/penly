@@ -93,7 +93,7 @@ fun OnboardingScreen(repo: VaultRepository, onInitialized: () -> Unit) {
     ) {
         Icon(Icons.Filled.Shield, contentDescription = null, tint = PenGreen, modifier = Modifier.size(84.dp))
         Spacer(Modifier.height(16.dp))
-        Text("私密密码箱", style = MaterialTheme.typography.titleLarge)
+        Text("印迹", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(6.dp))
         Text("端到端加密 · 明文不出本机", style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(28.dp))

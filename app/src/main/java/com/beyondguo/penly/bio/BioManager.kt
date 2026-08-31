@@ -162,8 +162,8 @@ class BioManager {
                 cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
                 prompt(
                     activity,
-                    title = "验证指纹以解锁密码箱",
-                    subtitle = "解锁私密密码箱",
+                    title = "验证指纹以解锁印迹",
+                    subtitle = "解锁印迹",
                     cipher = cipher,
                     onAuthed = { c ->
                         try {

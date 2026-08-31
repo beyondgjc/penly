@@ -248,7 +248,7 @@ fun SettingsScreen(
                     subtitle = "保存加密备份 JSON 到手机「下载」目录",
                     onClick = {
                         if (meta == null) {
-                            showToast("请先初始化密码箱")
+                            showToast("请先初始化印迹")
                         } else {
                             scope.launch {
                                 try {
@@ -270,7 +270,7 @@ fun SettingsScreen(
                     onClick = { importLauncher.launch("*/*") },
                 )
                 SettingRow(
-                    title = "重置密码箱",
+                    title = "重置印迹",
                     subtitle = "删除本机全部数据，不可恢复",
                     danger = true,
                     onClick = { confirmReset = true },
@@ -284,7 +284,7 @@ fun SettingsScreen(
             }
             Spacer(Modifier.height(16.dp))
             Text(
-                "私密密码箱 · 端到端加密，密钥不出本机",
+                "印迹 · 端到端加密，密钥不出本机",
                 style = MaterialTheme.typography.bodySmall,
                 color = PenText3,
                 textAlign = TextAlign.Center,
@@ -401,7 +401,7 @@ fun SettingsScreen(
 
     if (confirmReset) {
         ConfirmDialog(
-            title = "重置密码箱",
+            title = "重置印迹",
             text = "将删除本机所有密码数据（含指纹解锁凭证），且无法恢复。确定要继续吗？",
             confirmText = "重置",
             danger = true,
@@ -423,7 +423,7 @@ fun SettingsScreen(
             title = { Text("关于 · 加密说明") },
             text = {
                 Text(
-                    "密码箱采用端到端加密：主密码经 PBKDF2（10 万次迭代）派生 AES-256 密钥，" +
+                    "印迹采用端到端加密：主密码经 PBKDF2（10 万次迭代）派生 AES-256 密钥，" +
                         "账号/密码/备注在本机加密后才存储，密钥只驻留内存，应用切后台即自动锁定。\n\n" +
                         "「默认保护」使用应用内置默认密码，等同未加密，仅作快速体验；设置主密码后即升级为强保护。\n\n" +
                         "数据迁移通过导出的加密备份文件完成：设置主密码后的备份可与微信小程序互相导入；" +

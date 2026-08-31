@@ -1,4 +1,4 @@
-# 私密密码箱 Penly · 应用图标方案
+# 印迹 印迹 · 应用图标方案
 
 > 6 款矢量图标，统一套用品牌绿 `#07C160` 与 v2 扁平风，圆角 224/1024（≈22%）。
 > 矢量源文件为 SVG，可无损缩放至任意分辨率（含 App Store 1024px、Android xxxhdpi 192px、Favicon 等）。
@@ -10,18 +10,18 @@
 - 自适应图标（minSdk 29 主要走这条）：`mipmap-anydpi/ic_launcher.xml` + `mipmap-anydpi/ic_launcher_round.xml` → `drawable/ic_launcher_background.xml`（品牌绿底）+ `drawable/ic_launcher_foreground.xml`（白色指纹）
 - 传统密度图标（v25 兜底）：`mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher{,_round}.png` 已全部替换为指纹 PNG（旧的默认绿网 webp 已移除）
 - 全套位图导出（Android / 商店 / 小程序 / iOS）见 `export/`，含 `render_icons_node.js` 渲染脚本（基于 `@resvg/resvg-js`，纯二进制、无系统依赖）
-- 合成源：`penly-icon-6-composite.svg`（绿底圆角 + 白指纹，用于位图导出）
+- 合成源：`yinji-icon-6-composite.svg`（绿底圆角 + 白指纹，用于位图导出）
 
 ## 方案一览
 
 | 编号 | 文件 | 视觉 | 适用调性 |
 |---|---|---|---|
-| 1 | `penly-icon-1-shield.svg` | 绿底 + 白盾牌 + 绿钥匙孔 | 经典安全语义，强识别（**推荐首选**） |
-| 2 | `penly-icon-2-lock.svg` | 白底 + 绿智能锁 | 干净轻盈，贴近系统原生风格 |
-| 3 | `penly-icon-3-vault.svg` | 绿底 + 白保险箱 | 强调「本地自托管保险箱」 |
-| 4 | `penly-icon-4-key.svg` | 浅绿底 `#E6F9EF` + 绿钥匙 | 柔和差异化，显轻快 |
-| 5 | `penly-icon-5-hexagon.svg` | 绿六边形 + 白钥匙孔 | 几何现代感，科技/加密调性 |
-| 6 | `penly-icon-6-fingerprint.svg` | 绿底 + 白指纹 | 呼应 App 的生物识别解锁能力 |
+| 1 | `yinji-icon-1-shield.svg` | 绿底 + 白盾牌 + 绿钥匙孔 | 经典安全语义，强识别（**推荐首选**） |
+| 2 | `yinji-icon-2-lock.svg` | 白底 + 绿智能锁 | 干净轻盈，贴近系统原生风格 |
+| 3 | `yinji-icon-3-vault.svg` | 绿底 + 白保险箱 | 强调「本地自托管保险箱」 |
+| 4 | `yinji-icon-4-key.svg` | 浅绿底 `#E6F9EF` + 绿钥匙 | 柔和差异化，显轻快 |
+| 5 | `yinji-icon-5-hexagon.svg` | 绿六边形 + 白钥匙孔 | 几何现代感，科技/加密调性 |
+| 6 | `yinji-icon-6-fingerprint.svg` | 绿底 + 白指纹 | 呼应 App 的生物识别解锁能力 |
 
 ## 预览
 浏览器打开 `preview.html` 可横向对比 6 款。
@@ -32,4 +32,4 @@
 - **小程序**：微信对图标有圆角与尺寸要求，按平台导出对应 PNG。
 - 选定方案后，我可补充：① 各分辨率 PNG 导出脚本；② Android `mipmap-anydpi`/`ic_launcher` 自适应图标资源；③ 应用商店不同尺寸的变体（含圆角/留白微调）。
 
-> 设计来源：与 `penly-figma-design-system.md` 的 Color Token 完全一致（brand `#07C160`、brand.soft `#E6F9EF`）。
+> 设计来源：与 `yinji-figma-design-system.md` 的 Color Token 完全一致（brand `#07C160`、brand.soft `#E6F9EF`）。
