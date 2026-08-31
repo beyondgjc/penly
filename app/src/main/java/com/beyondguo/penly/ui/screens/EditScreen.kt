@@ -230,10 +230,12 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: () -> Unit) {
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = PenText1),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 decorationBox = { inner ->
-                    if (note.isEmpty()) {
-                        Text("补充说明…", style = MaterialTheme.typography.bodyLarge, color = PenText3)
+                    androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth()) {
+                        if (note.isEmpty()) {
+                            Text("补充说明…", style = MaterialTheme.typography.bodyLarge, color = PenText3)
+                        }
+                        inner()
                     }
-                    inner
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
