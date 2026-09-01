@@ -61,8 +61,9 @@ import kotlinx.coroutines.launch
  * ✕ / 居中标题 / ✓ 顶栏；头部头像 + 名称内联；标签左、输入右的扁平行；
  * ✕ 关闭、✓ 保存；编辑态底部红色删除。
  */
+/** [onDone] 参数 deleted：是否因删除而结束（删除时导航需弹回列表页而非详情页） */
 @Composable
-fun EditScreen(repo: VaultRepository, itemId: String, onDone: () -> Unit) {
+fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isEdit = itemId.isNotBlank()
@@ -111,7 +112,7 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: () -> Unit) {
                     note = note,
                 )
                 android.widget.Toast.makeText(context, "已保存", android.widget.Toast.LENGTH_SHORT).show()
-                onDone()
+                onDone(false)
             } catch (e: Exception) {
                 error = e.message ?: "保存失败"
                 busy = false
@@ -131,7 +132,7 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: () -> Unit) {
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onDone) {
+            IconButton(onClick = { onDone(false) }) {
                 Icon(Icons.Filled.Close, contentDescription = "关闭")
             }
             Text(
@@ -277,7 +278,7 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: () -> Unit) {
                 confirmDelete = false
                 scope.launch {
                     repo.deleteItem(itemId)
-                    onDone()
+                    onDone(true)
                 }
             },
             onDismiss = { confirmDelete = false },

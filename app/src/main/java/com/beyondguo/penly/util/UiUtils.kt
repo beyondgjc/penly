@@ -23,6 +23,7 @@ fun copySensitive(context: Context, label: String, text: String) {
         }
     }
     cm.setPrimaryClip(clip)
+    // TODO 应用在后台获取不到剪切板
     clearHandler.postDelayed({
         val current = cm.primaryClip?.getItemAt(0)?.text?.toString()
         if (current == text) cm.clearPrimaryClip()

@@ -134,7 +134,11 @@ private fun ReadyRoot(repo: VaultRepository, onVaultChanged: () -> Unit) {
                 EditScreen(
                     repo = repo,
                     itemId = entry.arguments?.getString("itemId").orEmpty(),
-                    onDone = { navController.popBackStack() },
+                    onDone = { deleted ->
+                        // 删除后条目已不存在，弹回列表页，避免落在详情页显示"记录不存在"
+                        if (deleted) navController.popBackStack(Routes.LIST, inclusive = false)
+                        else navController.popBackStack()
+                    },
                 )
             }
             composable(
