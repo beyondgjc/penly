@@ -57,6 +57,11 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.biometric)
+    // 显式升级 fragment ≥1.3.0：biometric 1.1.0 会把 fragment 钉在 1.2.5，
+    // 其 FragmentActivity 对 requestCode 强校验"仅低 16 位"，与 Activity Result API
+    // 默认 registry 的随机 requestCode 冲突，launch 文件选择器时必现 crash。
+    // fragment 1.3.0+ 已移除该校验（1.7.1 兼容 compileSdk 34）。
+    implementation("androidx.fragment:fragment-ktx:1.7.1")
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
     debugImplementation(libs.androidx.ui.tooling)

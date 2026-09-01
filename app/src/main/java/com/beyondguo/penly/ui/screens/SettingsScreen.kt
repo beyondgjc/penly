@@ -111,6 +111,9 @@ fun SettingsScreen(
         }
     }
 
+    // 导入：标准 Activity Result API 文件选择。
+    // biometric 1.2.0-beta01 起 fragment 已 ≥1.3.0（移除了 requestCode 低 16 位校验），
+    // 默认 registry 的随机 requestCode 不再与 FragmentActivity 冲突，无需任何自定义适配
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
     ) { uri ->
