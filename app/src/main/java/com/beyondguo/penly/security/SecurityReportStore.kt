@@ -12,6 +12,15 @@ import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 
 /**
+ * DataStore 委托**必须**声明在文件顶层：委托的 INSTANCE 缓存是委托对象自身的实例字段，
+ * 若写在类体内，每个 SecurityReportStore 实例都会各建一个 DataStore，
+ * 而 FileStorage 用静态 activeFiles 集合保证「同文件单连接」，
+ * 第二个实例首次读写即抛 IllegalStateException（multiple DataStores active for the same file）。
+ * 与 VaultStore 的 penlyDataStore 写法保持一致。
+ */
+private val Context.penlySecurityDataStore by preferencesDataStore(name = "penly_security")
+
+/**
  * 体检报告缓存 + 联网开关偏好。
  *
  * - 报告用**会话密钥**加密后存 DataStore（key: security_report）：锁定后即无法解密读取
@@ -24,24 +33,22 @@ class SecurityReportStore(private val context: Context) {
     private val reportKey = stringPreferencesKey("security_report")
     private val netKey = booleanPreferencesKey("breach_net_on")
 
-    private val Context.ds by preferencesDataStore(name = "penly_security")
-
     // ---- 联网开关（用户授权，默认关闭）----
-    suspend fun isNetworkEnabled(): Boolean = context.ds.data.first()[netKey] ?: false
+    suspend fun isNetworkEnabled(): Boolean = context.penlySecurityDataStore.data.first()[netKey] ?: false
     suspend fun setNetworkEnabled(on: Boolean) {
-        context.ds.edit { it[netKey] = on }
+        context.penlySecurityDataStore.edit { it[netKey] = on }
     }
 
     // ---- 报告缓存（会话密钥加密）----
     suspend fun save(report: SecurityReport) {
         val k = SessionManager.requireKey()
         val enc = CryptoEngine.aesEncrypt(json.encodeToString(SecurityReport.serializer(), report), k)
-        context.ds.edit { it[reportKey] = "${enc.ivB64}|${enc.dataB64}" }
+        context.penlySecurityDataStore.edit { it[reportKey] = "${enc.ivB64}|${enc.dataB64}" }
     }
 
     /** 读取缓存；失效（>7 天）或解密失败（如改密后密钥变更）返回 null */
     suspend fun load(): SecurityReport? {
-        val raw = context.ds.data.first()[reportKey] ?: return null
+        val raw = context.penlySecurityDataStore.data.first()[reportKey] ?: return null
         val k = SessionManager.requireKey() // 锁定抛 VaultLockedException
         val parts = raw.split("|", limit = 2)
         if (parts.size != 2) return null
@@ -55,7 +62,7 @@ class SecurityReportStore(private val context: Context) {
     }
 
     suspend fun clear() {
-        context.ds.edit { it.remove(reportKey) }
+        context.penlySecurityDataStore.edit { it.remove(reportKey) }
     }
 
     companion object {
