@@ -64,5 +64,7 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.7.1")
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
     debugImplementation(libs.androidx.ui.tooling)
 }

@@ -37,7 +37,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.beyondguo.penly.bio.BioManager
-import com.beyondguo.penly.data.VaultMeta
 import com.beyondguo.penly.data.VaultRepository
 import com.beyondguo.penly.ui.components.ConfirmDialog
 import com.beyondguo.penly.ui.theme.PenDanger
@@ -57,13 +56,15 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
     val activity = context as? FragmentActivity
     val scope = rememberCoroutineScope()
 
-    var meta by remember { mutableStateOf<VaultMeta?>(null) }
+    // 是否需要输入密码：任一槽位为 custom 即需要。
+    // 不读单个槽位的 meta —— 那等于先假设了"哪个槽位是真库"。
+    var requiresPwd by remember { mutableStateOf<Boolean?>(null) }
     var pwd by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var showReset by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { meta = repo.meta() }
+    LaunchedEffect(Unit) { requiresPwd = repo.requiresPassword() }
 
     fun bioUnlock() {
         val fa = activity ?: return
@@ -99,9 +100,8 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
         view.viewTreeObserver.addOnWindowFocusChangeListener(listener)
         onDispose { view.viewTreeObserver.removeOnWindowFocusChangeListener(listener) }
     }
-    LaunchedEffect(meta, windowFocused) {
-        val m = meta
-        if (m == null || autoPrompted || !bioReady || !windowFocused) return@LaunchedEffect
+    LaunchedEffect(requiresPwd, windowFocused) {
+        if (requiresPwd == null || autoPrompted || !bioReady || !windowFocused) return@LaunchedEffect
         autoPrompted = true
         kotlinx.coroutines.delay(200) // 等待窗口完成首帧渲染
         bioUnlock()
@@ -126,7 +126,7 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
         Text("印迹", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(28.dp))
 
-        if (meta?.pwdMode == VaultMeta.MODE_DEFAULT) {
+        if (requiresPwd == false) {
             Text(
                 "默认保护模式 · 未设主密码",
                 style = MaterialTheme.typography.bodySmall,

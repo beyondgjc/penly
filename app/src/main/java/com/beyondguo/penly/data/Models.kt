@@ -1,7 +1,33 @@
 package com.beyondguo.penly.data
 
+import com.beyondguo.penly.crypto.CryptoEngine
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+
+/**
+ * 存储槽位 —— **刻意无语义**：A / B 不代表主次。
+ *
+ * 真库落在哪个槽位由初始化时随机决定，另一槽位承载占位数据（未设置应急密码）
+ * 或影子数据（已设置应急密码）。存储层面因此无法区分主次，也无法判断
+ * 「用户是否设置了应急密码」——这是影子保险库不可证伪性的地基。
+ *
+ * 当前生效槽位只在内存（[com.beyondguo.penly.crypto.SessionManager]），
+ * 绝不写入任何持久化介质。
+ */
+enum class Slot(val index: Int) {
+    A(0),
+    B(1),
+    ;
+
+    fun other(): Slot = if (this == A) B else A
+
+    companion object {
+        fun of(index: Int): Slot = if (index == 0) A else B
+
+        /** 随机槽位：消除「槽位 A 总是真库」这类跨设备统计规律 */
+        fun random(): Slot = if (CryptoEngine.randomBytes(1)[0].toInt() and 1 == 0) A else B
+    }
+}
 
 /**
  * 数据模型 —— 字段名与小程序存储结构/备份格式逐字对齐（`_id`、`xEnc`/`xIv` 等），
@@ -19,10 +45,29 @@ data class VaultMeta(
     @SerialName("updatedAt") val updatedAt: Long = 0,
     /** 仅出现在小程序 default 模式导出的备份里（用于派生 wxb-def-v1 密钥）；本地存储不写入 */
     @SerialName("openid") val openid: String? = null,
+    /** 存储格式版本，用于后续迁移；老数据缺失时按 1 处理 */
+    @SerialName("schemaVersion") val schemaVersion: Int = SCHEMA_V1,
+    /**
+     * 辅助槽位凭证（命名刻意中性，不暗示主从）：
+     * - `auxSaltB64`：另一槽位的 salt（salt 本就可公开）
+     * - `auxSecretEnc` / `auxSecretIv`：用**本槽位**密钥加密的一段秘密
+     *
+     * 两个槽位的字段结构完全一致，但语义不同：
+     * - 真库槽位：秘密是「另一槽位的密码」——未设置应急密码时是随机密码（占位槽位），
+     *   已设置时是应急密码。解锁真库后可据此自动重生成影子数据。
+     * - 影子槽位：秘密是一段随机诱饵。应急密码解开影子槽位只会得到诱饵，
+     *   无法触达真库——这是 duress 需要的**单向性**。
+     */
+    @SerialName("auxSaltB64") val auxSaltB64: String = "",
+    @SerialName("auxSecretEnc") val auxSecretEnc: String = "",
+    @SerialName("auxSecretIv") val auxSecretIv: String = "",
 ) {
     companion object {
         const val MODE_CUSTOM = "custom"
         const val MODE_DEFAULT = "default"
+
+        const val SCHEMA_V1 = 1 // 单槽位（legacy vault_meta / vault_items）
+        const val SCHEMA_V2 = 2 // 双槽位（vm_0/vi_0、vm_1/vi_1）
     }
 }
 
@@ -51,4 +96,27 @@ data class PlainEntry(
     val note: String,
     val createdAt: Long,
     val updatedAt: Long,
+)
+
+/**
+ * 单条记录的体检状态（[breached] 语义：0=未泄露，>0=泄露 N 次，-1=联网查询失败/未开启）。
+ * 仅包含结构化判定结果，不含任何明文。
+ */
+@Serializable
+data class ItemSecurityState(
+    @SerialName("itemId") val itemId: String,
+    @SerialName("breached") val breached: Int = 0,
+    @SerialName("reused") val reused: Boolean = false,
+    @SerialName("weak") val weak: Boolean = false,
+)
+
+/** 一次体检结果（[SecurityReportStore] 用会话密钥加密缓存，锁定即不可读） */
+@Serializable
+data class SecurityReport(
+    @SerialName("scannedAt") val scannedAt: Long = 0,
+    @SerialName("totalCount") val totalCount: Int = 0,
+    @SerialName("breachedCount") val breachedCount: Int = 0,
+    @SerialName("reusedCount") val reusedCount: Int = 0,
+    @SerialName("weakCount") val weakCount: Int = 0,
+    @SerialName("states") val states: List<ItemSecurityState> = emptyList(),
 )

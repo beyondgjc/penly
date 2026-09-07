@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 泄露哨兵只与 HaveIBeenPwned 的 Pwned Passwords 区间接口通信，强制 HTTPS；
+         其余域名（含明文）一律禁止，避免任何意外明文外发。 -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">api.pwnedpasswords.com</domain>
+    </domain-config>
+</network-security-config>

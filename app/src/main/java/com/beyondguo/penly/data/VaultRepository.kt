@@ -7,6 +7,10 @@ import com.beyondguo.penly.backup.BackupFile
 import com.beyondguo.penly.backup.BackupFormatException
 import com.beyondguo.penly.crypto.CryptoEngine
 import com.beyondguo.penly.crypto.SessionManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 
 /** 备份导入失败（可向用户展示的中文信息） */
 class ImportException(message: String) : Exception(message)
@@ -23,57 +27,425 @@ data class ImportResult(val type: String, val count: Int)
 /**
  * 印迹业务仓库（对应小程序 services/vault.js + 部分 utils/crypto.js 业务封装）。
  * 所有读写只接触密文；明文与密钥仅在会话内存中。
+ *
+ * ## v2 双槽位（影子保险库）
+ *
+ * 存储层面存在两个**无语义**槽位 [Slot.A] / [Slot.B]：
+ * - 真库落在哪个槽位由初始化时随机决定，另一槽位承载占位数据（未设置应急密码）
+ *   或影子数据（已设置应急密码）—— 因此磁盘上无法区分主次，也看不出用户到底
+ *   设没设应急密码。
+ * - 解锁时**并发**派生两个槽位，且必须等两路都跑完才判定结果，使总耗时恒定为
+ *   `max(两次派生)`。一旦短路返回，掐表就能判断"刚才输入的是不是应急密码"。
+ *
+ * 每个槽位的 meta 都有一组 `aux*` 字段保存「另一槽位的密码」（用本槽位密钥加密）：
+ * - 真库槽位：另一槽位的密码（占位随机密码 / 应急密码）→ 解锁真库后可自动重生成影子数据
+ * - 影子槽位：一段随机诱饵 → 应急密码只能走到诱饵，**无法触达真库**
+ *
+ * 这种单向性正是 duress 需要的：拿到应急密码的人打不开真库；
+ * 而拿到主密码的人本来就已经赢了，不再构成额外风险。
  */
 class VaultRepository(private val store: VaultStore) {
 
     val unlocked get() = SessionManager.unlocked
 
-    // ---------------- meta / 初始化 / 解锁 ----------------
+    private companion object {
+        /** 空槽位派生用的固定 salt：让"空槽位"也走一次完整 PBKDF2，保证分支形状一致 */
+        const val DUMMY_SALT_B64 = "AAAAAAAAAAAAAAAAAAAAAA=="
+    }
 
-    suspend fun meta(): VaultMeta? = store.readMeta()
+    // ---------------- meta / 迁移 / 初始化 / 解锁 ----------------
 
-    suspend fun isInitialized(): Boolean = meta()?.initialized == true
+    /** 当前槽位的 meta；未解锁时退回槽位 A（再退回 B），仅供 UI 判空使用 */
+    suspend fun meta(): VaultMeta? {
+        val slot = SessionManager.activeSlotOrNull()
+        if (slot != null) return store.readMeta(slot)
+        return store.readMeta(Slot.A) ?: store.readMeta(Slot.B)
+    }
+
+    suspend fun isInitialized(): Boolean =
+        store.readMeta(Slot.A)?.initialized == true ||
+            store.readMeta(Slot.B)?.initialized == true ||
+            store.readLegacy()?.first?.initialized == true
 
     /**
-     * 首次初始化：生成随机 salt → 派生密钥 → 生成校验串 → 建 meta。
-     * mode 为 MODE_DEFAULT（内置默认主密码）或 MODE_CUSTOM（用户主密码）。
+     * 是否需要输入密码：任一槽位为 custom 即需要。
+     * 锁屏/设置页用它决定 UI 形态，不依赖"哪个槽位是真库"这一秘密。
+     */
+    suspend fun requiresPassword(): Boolean =
+        store.readMeta(Slot.A)?.pwdMode == VaultMeta.MODE_CUSTOM ||
+            store.readMeta(Slot.B)?.pwdMode == VaultMeta.MODE_CUSTOM ||
+            store.readLegacy()?.first?.pwdMode == VaultMeta.MODE_CUSTOM
+
+    /**
+     * v1 → v2 迁移：把 legacy 单槽位搬到**随机槽位**，并用无人知晓的随机密码
+     * 建立另一槽位的占位数据，然后删除 legacy key。
+     *
+     * 关键：两槽位 [VaultMeta.createdAt] 取同一个值，避免"更早创建的是真库"成为规律。
+     * 数据本身零变换（salt/verify/items 原样搬运），老用户的主密码照常解锁。
+     */
+    suspend fun migrateIfNeeded() {
+        val legacy = store.readLegacy() ?: return
+        val real = Slot.random()
+        val peer = real.other()
+        val now = System.currentTimeMillis()
+        val createdAt = legacy.first.createdAt.takeIf { it > 0 } ?: now
+
+        store.writeMeta(
+            real,
+            legacy.first.copy(
+                schemaVersion = VaultMeta.SCHEMA_V2,
+                auxSaltB64 = "",
+                auxSecretEnc = "",
+                auxSecretIv = "",
+            ),
+        )
+        store.writeItems(real, legacy.second)
+
+        val peerPassword = CryptoEngine.randomHex(32)
+        val peerSaltB64 = CryptoEngine.randomSaltB64()
+        val peerKey = CryptoEngine.deriveKeyB64(peerPassword, peerSaltB64)
+        val (peerVerify, peerVerifyIv) = CryptoEngine.makeVerify(peerKey)
+        val peerItems = encryptEntries(ShadowVaultGenerator.generate(legacy.second), peerKey)
+        peerKey.fill(0)
+
+        store.writeItems(peer, peerItems)
+        store.writeMeta(
+            peer,
+            VaultMeta(
+                saltB64 = peerSaltB64,
+                verifyB64 = peerVerify,
+                verifyIvB64 = peerVerifyIv,
+                pwdMode = legacy.first.pwdMode,
+                createdAt = createdAt,
+                updatedAt = createdAt,
+                schemaVersion = VaultMeta.SCHEMA_V2,
+            ),
+        )
+        store.clearLegacy()
+    }
+
+    /**
+     * 首次初始化：**同时**建立两个槽位。
+     * - [master] 落在随机选中的真库槽位
+     * - 另一槽位用 256 位随机密码（生成即弃，无人知晓）加密影子数据，作为占位
+     *
+     * 于是"未设置应急密码"与"已设置应急密码"在磁盘上完全同构 —— 这是
+     * 影子保险库不可证伪性的地基。
      */
     suspend fun initVault(master: String, mode: String) {
         require(master.length >= CryptoEngine.MASTER_MIN_LEN) { "主密码至少 ${CryptoEngine.MASTER_MIN_LEN} 位" }
-        val saltB64 = CryptoEngine.randomSaltB64()
-        val key = CryptoEngine.deriveKeyB64(master, saltB64)
-        val (verifyB64, verifyIvB64) = CryptoEngine.makeVerify(key)
+
+        store.clearAll() // 清掉可能的 legacy 残留，保证两个槽位从零开始同生同构
+
+        val real = Slot.random()
+        val peer = real.other()
         val now = System.currentTimeMillis()
-        store.writeMeta(VaultMeta(saltB64, verifyB64, verifyIvB64, mode, true, now, now))
-        SessionManager.establish(key)
+
+        val realSaltB64 = CryptoEngine.randomSaltB64()
+        val realKey = CryptoEngine.deriveKeyB64(master, realSaltB64)
+        val (realVerify, realVerifyIv) = CryptoEngine.makeVerify(realKey)
+
+        val peerPassword = CryptoEngine.randomHex(32)
+        val peerSaltB64 = CryptoEngine.randomSaltB64()
+        val peerKey = CryptoEngine.deriveKeyB64(peerPassword, peerSaltB64)
+        val (peerVerify, peerVerifyIv) = CryptoEngine.makeVerify(peerKey)
+
+        // 真库此刻为空 → 影子也为空
+        val peerItems = encryptEntries(ShadowVaultGenerator.generate(emptyList()), peerKey)
+        val auxReal = CryptoEngine.aesEncrypt(peerPassword, realKey)
+        val auxPeer = CryptoEngine.aesEncrypt(CryptoEngine.randomHex(32), peerKey) // 诱饵
+        peerKey.fill(0)
+
+        store.writeMeta(
+            real,
+            VaultMeta(
+                saltB64 = realSaltB64,
+                verifyB64 = realVerify,
+                verifyIvB64 = realVerifyIv,
+                pwdMode = mode,
+                createdAt = now,
+                updatedAt = now,
+                schemaVersion = VaultMeta.SCHEMA_V2,
+                auxSaltB64 = peerSaltB64,
+                auxSecretEnc = auxReal.dataB64,
+                auxSecretIv = auxReal.ivB64,
+            ),
+        )
+        store.writeItems(real, emptyList())
+
+        store.writeMeta(
+            peer,
+            VaultMeta(
+                saltB64 = peerSaltB64,
+                verifyB64 = peerVerify,
+                verifyIvB64 = peerVerifyIv,
+                pwdMode = mode,
+                createdAt = now, // 与真库槽位同值：不允许"更早的是真库"成为规律
+                updatedAt = now,
+                schemaVersion = VaultMeta.SCHEMA_V2,
+                auxSaltB64 = realSaltB64,
+                auxSecretEnc = auxPeer.dataB64,
+                auxSecretIv = auxPeer.ivB64,
+            ),
+        )
+        store.writeItems(peer, peerItems)
+
+        SessionManager.establish(realKey, real)
     }
 
-    /** 用主密码解锁（零知识：本地派生 → 解密校验串比对）。成功建立会话，失败返回 false。 */
-    suspend fun unlock(master: String): Boolean {
-        val m = meta() ?: return false
-        val key = CryptoEngine.deriveKeyB64(master, m.saltB64)
-        return if (CryptoEngine.verifyMaster(key, m.verifyB64, m.verifyIvB64)) {
-            SessionManager.establish(key)
-            true
-        } else {
-            false
-        }
+    /**
+     * 用主密码或应急密码解锁。
+     *
+     * **恒定时间要求**：两路派生并发执行，且必须都 [kotlinx.coroutines.Deferred.await]
+     * 完成才判定结果。绝不能"先试 A、成功就返回" —— 那样真密码耗时 1 次派生、
+     * 应急密码耗时 2 次，掐表即可分辨，duress 当场破功。
+     */
+    suspend fun unlock(master: String): Boolean = coroutineScope {
+        val jobA = async(Dispatchers.Default) { tryUnlock(Slot.A, master) }
+        val jobB = async(Dispatchers.Default) { tryUnlock(Slot.B, master) }
+        val keyA = jobA.await() // 不得短路：两路都必须跑完
+        val keyB = jobB.await()
+        val hit = when {
+            keyA != null -> Slot.A to keyA
+            keyB != null -> Slot.B to keyB
+            else -> null
+        } ?: return@coroutineScope false
+        SessionManager.establish(hit.second, hit.first)
+        primaryCache = null
+        withContext(Dispatchers.Default) { ensureAuxProvisioned(hit.first, hit.second) }
+        true
+    }
+
+    /** 尝试用 [master] 解开 [slot]；空槽位也会走一次完整派生以保证耗时一致 */
+    private suspend fun tryUnlock(slot: Slot, master: String): ByteArray? {
+        val m = store.readMeta(slot)
+        val saltB64 = m?.saltB64 ?: DUMMY_SALT_B64
+        val key = CryptoEngine.deriveKeyB64(master, saltB64)
+        val ok = m != null && CryptoEngine.verifyMaster(key, m.verifyB64, m.verifyIvB64)
+        if (ok) return key
+        key.fill(0)
+        return null
+    }
+
+    /**
+     * 仅校验密码是否正确（主密码、应急密码皆可），**不改变当前会话**。
+     *
+     * 用于"设置页验证一次主密码"这类场景：若改用 [unlock]，输错时会把会话切到另一槽位。
+     * 同样要求恒定时间 —— 校验结果本身也在泄露"这个密码是不是应急密码"。
+     */
+    suspend fun verifyPassword(master: String): Boolean = coroutineScope {
+        val jobA = async(Dispatchers.Default) { tryUnlock(Slot.A, master) }
+        val jobB = async(Dispatchers.Default) { tryUnlock(Slot.B, master) }
+        val keyA = jobA.await() // 不得短路
+        val keyB = jobB.await()
+        val ok = keyA != null || keyB != null
+        keyA?.fill(0)
+        keyB?.fill(0)
+        ok
     }
 
     /** default 模式一键解锁（内置默认主密码） */
     suspend fun unlockDefault(): Boolean {
-        val m = meta() ?: return false
-        if (m.pwdMode != VaultMeta.MODE_DEFAULT) return false
+        if (requiresPassword()) return false
         return unlock(CryptoEngine.ANDROID_DEFAULT_MASTER)
     }
 
     fun lock() = SessionManager.lock()
 
+    // ---------------- 影子保险库 ----------------
+
+    /**
+     * 当前会话是否位于**主槽位**（aux 秘密能真正打开另一槽位）。
+     *
+     * 判断方式：取出本槽位的 aux 秘密去验证另一槽位的校验串。
+     * 影子槽位的 aux 是诱饵，必然验证失败。
+     *
+     * 该判断**只在内存中进行**，不写入任何持久化介质 —— 一旦落盘，
+     * "哪个槽位是真库"这一秘密即告泄露。
+     *
+     * ⚠️ 仅可用于"是否允许某项操作"的门禁判断。**严禁用于向用户展示状态**
+     * （例如"你当前位于影子库"），那等于当面告诉胁迫者。
+     */
+    suspend fun isPrimary(): Boolean {
+        val slot = SessionManager.activeSlotOrNull() ?: return false
+        val m = store.readMeta(slot) ?: return false
+        val peerMeta = store.readMeta(slot.other()) ?: return false
+        val aux = readAuxSecret(m, SessionManager.requireKey()) ?: return false
+        val peerKey = CryptoEngine.deriveKeyB64(aux, peerMeta.saltB64)
+        val ok = CryptoEngine.verifyMaster(peerKey, peerMeta.verifyB64, peerMeta.verifyIvB64)
+        peerKey.fill(0)
+        return ok
+    }
+
+    /**
+     * [isPrimary] 的会话级缓存。
+     *
+     * 每次判断都要多跑一次 PBKDF2（100k），而槽位在会话期间不会变，
+     * 因此算一次即可 —— 否则每次保存条目都要白付 100ms 级开销。
+     * 只驻内存；会话一结束（[SessionManager.isUnlocked] 为 false）立即失效。
+     */
+    @Volatile
+    private var primaryCache: Boolean? = null
+
+    private suspend fun isPrimaryCached(): Boolean {
+        if (!SessionManager.isUnlocked()) {
+            primaryCache = null
+            return false
+        }
+        primaryCache?.let { return it }
+        val v = isPrimary()
+        primaryCache = v
+        return v
+    }
+
+    /**
+     * 设置 / 重设应急密码（只能在主槽位会话中调用）。
+     *
+     * 只替换另一槽位的密钥与密文，**保留其 [VaultMeta.createdAt]**
+     * —— 否则"设置应急密码"这一动作会在磁盘上留下时间戳痕迹，
+     * 使"影子库是后来才建的"被推断出来。
+     */
+    suspend fun setDuressPassword(duress: String): String? =
+        withContext(Dispatchers.Default) { setDuressPasswordInternal(duress) }
+
+    private suspend fun setDuressPasswordInternal(duress: String): String? {
+        if (duress.length < CryptoEngine.MASTER_MIN_LEN) {
+            return "应急密码至少 ${CryptoEngine.MASTER_MIN_LEN} 位"
+        }
+        if (!isPrimaryCached()) return "当前会话不支持此操作"
+
+        val slot = SessionManager.activeSlotOrNull() ?: return "印迹未解锁"
+        val peer = slot.other()
+        val m = store.readMeta(slot) ?: return "印迹尚未初始化"
+        val key = SessionManager.requireKey()
+        val oldPeerMeta = store.readMeta(peer)
+
+        val newSaltB64 = CryptoEngine.randomSaltB64()
+        val newKey = CryptoEngine.deriveKeyB64(duress, newSaltB64)
+        val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(newKey)
+        val shadowItems = encryptEntries(
+            ShadowVaultGenerator.generate(store.readItems(slot)),
+            newKey,
+        )
+        val auxPeer = CryptoEngine.aesEncrypt(CryptoEngine.randomHex(32), newKey) // 诱饵
+        val now = System.currentTimeMillis()
+
+        store.writeItems(peer, shadowItems)
+        store.writeMeta(
+            peer,
+            VaultMeta(
+                saltB64 = newSaltB64,
+                verifyB64 = newVerify,
+                verifyIvB64 = newVerifyIv,
+                pwdMode = m.pwdMode, // 与主槽位保持一致，避免影子库停留在旧模式
+                createdAt = oldPeerMeta?.createdAt ?: now, // 保持：假装它一直存在
+                updatedAt = oldPeerMeta?.updatedAt ?: now, // 冻结：设应急密码不得在磁盘留时间戳痕迹（否则 updatedAt>createdAt 即暴露"已设应急"）
+                schemaVersion = VaultMeta.SCHEMA_V2,
+                auxSaltB64 = m.saltB64,
+                auxSecretEnc = auxPeer.dataB64,
+                auxSecretIv = auxPeer.ivB64,
+            ),
+        )
+
+        val auxReal = CryptoEngine.aesEncrypt(duress, key)
+        store.writeMeta(
+            slot,
+            m.copy(
+                auxSaltB64 = newSaltB64,
+                auxSecretEnc = auxReal.dataB64,
+                auxSecretIv = auxReal.ivB64,
+            ),
+        )
+        newKey.fill(0)
+        return null
+    }
+
+    /**
+     * 主库条目数变化超过阈值时，自动重生成影子数据。
+     *
+     * 必须自动：影子数据若长期静止，攻击者对比两次磁盘快照即可识别"哪个槽位在变"。
+     */
+    private suspend fun syncShadowIfNeeded() {
+        val slot = SessionManager.activeSlotOrNull() ?: return
+        if (!isPrimaryCached()) return // 影子库会话不得回写真库
+        val peer = slot.other()
+        val peerMeta = store.readMeta(peer) ?: return
+        val realItems = store.readItems(slot)
+        if (!ShadowVaultGenerator.needsRegen(realItems.size, store.readItems(peer).size)) return
+
+        val m = store.readMeta(slot) ?: return
+        val aux = readAuxSecret(m, SessionManager.requireKey()) ?: return
+        val peerKey = CryptoEngine.deriveKeyB64(aux, peerMeta.saltB64)
+        store.writeItems(peer, encryptEntries(ShadowVaultGenerator.generate(realItems), peerKey))
+        peerKey.fill(0)
+    }
+
+    /**
+     * 补齐 aux 凭证：老数据迁移或备份导入后，落地时不知道主密码，aux 字段为空；
+     * 首次解锁拿到密钥后在此补建另一槽位的占位数据与凭证。
+     */
+    private suspend fun ensureAuxProvisioned(slot: Slot, key: ByteArray) {
+        val m = store.readMeta(slot) ?: return
+        if (m.auxSecretEnc.isNotBlank()) return
+        val peer = slot.other()
+        val now = System.currentTimeMillis()
+        val createdAt = m.createdAt.takeIf { it > 0 } ?: now
+
+        val peerPassword = CryptoEngine.randomHex(32)
+        val peerSaltB64 = CryptoEngine.randomSaltB64()
+        val peerKey = CryptoEngine.deriveKeyB64(peerPassword, peerSaltB64)
+        val (peerVerify, peerVerifyIv) = CryptoEngine.makeVerify(peerKey)
+        val peerItems = encryptEntries(ShadowVaultGenerator.generate(store.readItems(slot)), peerKey)
+        val auxPeer = CryptoEngine.aesEncrypt(CryptoEngine.randomHex(32), peerKey) // 诱饵
+        peerKey.fill(0)
+
+        store.writeItems(peer, peerItems)
+        store.writeMeta(
+            peer,
+            VaultMeta(
+                saltB64 = peerSaltB64,
+                verifyB64 = peerVerify,
+                verifyIvB64 = peerVerifyIv,
+                pwdMode = m.pwdMode,
+                createdAt = createdAt,
+                updatedAt = createdAt,
+                schemaVersion = VaultMeta.SCHEMA_V2,
+                auxSaltB64 = m.saltB64,
+                auxSecretEnc = auxPeer.dataB64,
+                auxSecretIv = auxPeer.ivB64,
+            ),
+        )
+        val auxReal = CryptoEngine.aesEncrypt(peerPassword, key)
+        store.writeMeta(
+            slot,
+            m.copy(
+                schemaVersion = VaultMeta.SCHEMA_V2,
+                auxSaltB64 = peerSaltB64,
+                auxSecretEnc = auxReal.dataB64,
+                auxSecretIv = auxReal.ivB64,
+            ),
+        )
+    }
+
+    private fun readAuxSecret(meta: VaultMeta, key: ByteArray): String? {
+        if (meta.auxSecretEnc.isBlank()) return null
+        return try {
+            CryptoEngine.aesDecrypt(
+                CryptoEngine.EncPayload(meta.auxSecretIv, meta.auxSecretEnc),
+                key,
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     // ---------------- 条目 CRUD ----------------
 
-    suspend fun items(): List<VaultItem> = store.readItems().sortedByDescending { it.updatedAt }
+    suspend fun items(): List<VaultItem> =
+        store.readItems(SessionManager.requireSlot()).sortedByDescending { it.updatedAt }
 
-    suspend fun item(id: String): VaultItem? = store.readItems().firstOrNull { it.id == id }
+    suspend fun item(id: String): VaultItem? =
+        store.readItems(SessionManager.requireSlot()).firstOrNull { it.id == id }
 
     /** 解密条目；未解锁抛 [com.beyondguo.penly.crypto.VaultLockedException] */
     suspend fun decryptItem(item: VaultItem): PlainEntry {
@@ -110,6 +482,7 @@ class VaultRepository(private val store: VaultStore) {
         note: String,
     ): String {
         val key = SessionManager.requireKey()
+        val slot = SessionManager.requireSlot()
         fun enc(plain: String): Pair<String, String> =
             if (plain.isEmpty()) "" to "" else {
                 val p = CryptoEngine.aesEncrypt(plain, key)
@@ -130,41 +503,70 @@ class VaultRepository(private val store: VaultStore) {
             createdAt = old?.createdAt ?: now,
             updatedAt = now,
         )
-        store.upsertItem(newItem)
+        store.upsertItem(slot, newItem)
+        // 影子同步含 PBKDF2，必须离开主线程；且只在条目数差异越阈时才真的动手
+        withContext(Dispatchers.Default) { syncShadowIfNeeded() }
         return newItem.id
     }
 
-    suspend fun deleteItem(id: String) = store.deleteItem(id)
+    suspend fun deleteItem(id: String) {
+        store.deleteItem(SessionManager.requireSlot(), id)
+        withContext(Dispatchers.Default) { syncShadowIfNeeded() }
+    }
 
     // ---------------- 修改主密码 / 重置 ----------------
 
     /**
      * 设置/修改主密码：旧密钥解密全部记录 → 新密钥重加密 → 更新 meta（新 salt + 新校验串）。
-     * [oldPlain] 为 null 表示 default → custom 升级（旧密码自动取内置默认主密码）。
-     * 成功返回 null；失败返回中文错误信息。
+     * 只作用于**当前槽位**；aux 秘密用新密钥重新加密，保证影子数据仍可自动同步。
      */
     suspend fun changeMasterPassword(oldPlain: String?, newPlain: String): String? {
         if (newPlain.length < CryptoEngine.MASTER_MIN_LEN) {
             return "主密码至少 ${CryptoEngine.MASTER_MIN_LEN} 位"
         }
-        val m = meta() ?: return "印迹尚未初始化"
+        val slot = SessionManager.activeSlotOrNull() ?: return "印迹未解锁"
+        val m = store.readMeta(slot) ?: return "印迹尚未初始化"
+        val peer = slot.other()
         val oldMaster = oldPlain ?: CryptoEngine.ANDROID_DEFAULT_MASTER
         val oldKey = CryptoEngine.deriveKeyB64(oldMaster, m.saltB64)
         if (!CryptoEngine.verifyMaster(oldKey, m.verifyB64, m.verifyIvB64)) {
+            oldKey.fill(0)
             return "旧主密码错误"
         }
+        val auxSecret = readAuxSecret(m, oldKey)
+
         val newSaltB64 = CryptoEngine.randomSaltB64()
         val newKey = CryptoEngine.deriveKeyB64(newPlain, newSaltB64)
         val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(newKey)
-        val reEnc = reEncryptItems(store.readItems(), oldKey, newKey)
-        store.writeItems(reEnc)
-        val now = System.currentTimeMillis()
-        store.writeMeta(VaultMeta(newSaltB64, newVerify, newVerifyIv, VaultMeta.MODE_CUSTOM, true, m.createdAt, now))
-        SessionManager.establish(newKey)
+        val reEnc = reEncryptItems(store.readItems(slot), oldKey, newKey)
+        oldKey.fill(0)
+        val ts = System.currentTimeMillis()
+
+        val auxEnc = auxSecret?.let { CryptoEngine.aesEncrypt(it, newKey) }
+        store.writeItems(slot, reEnc)
+        store.writeMeta(
+            slot,
+            m.copy(
+                saltB64 = newSaltB64,
+                verifyB64 = newVerify,
+                verifyIvB64 = newVerifyIv,
+                pwdMode = VaultMeta.MODE_CUSTOM,
+                updatedAt = ts,
+                auxSecretEnc = auxEnc?.dataB64 ?: m.auxSecretEnc,
+                auxSecretIv = auxEnc?.ivB64 ?: m.auxSecretIv,
+            ),
+        )
+        // 同步对端 meta 的 pwdMode / updatedAt，使两槽位明文结构保持对称。
+        // 否则 changeMaster 后 real.pwdMode=CUSTOM 而 peer 停在旧模式，两槽位明文
+        // 不对称会泄露双槽位设计，破坏 §3.4 不可证伪性。
+        store.readMeta(peer)?.let { pm ->
+            store.writeMeta(peer, pm.copy(pwdMode = VaultMeta.MODE_CUSTOM, updatedAt = ts))
+        }
+        SessionManager.establish(newKey, slot) // 槽位不变
         return null
     }
 
-    /** 重置印迹：清空全部本地数据（忘记主密码场景） */
+    /** 重置印迹：清空两个槽位（忘记主密码场景） */
     suspend fun resetVault() {
         store.clearAll()
         SessionManager.lock()
@@ -174,10 +576,11 @@ class VaultRepository(private val store: VaultStore) {
 
     /**
      * 导出为 `private-vault-backup` v1 JSON。
-     * default 模式导出仅本应用可再解锁（crypto.masterRef 标记），custom 模式导出通用。
+     * 只导出**当前槽位**；`aux*` 是本机的槽位关联信息，不带进备份文件。
      */
     suspend fun exportJson(): String {
-        val m = meta() ?: throw IllegalStateException("印迹尚未初始化")
+        val slot = SessionManager.requireSlot()
+        val m = store.readMeta(slot) ?: throw IllegalStateException("印迹尚未初始化")
         val masterRef = if (m.pwdMode == VaultMeta.MODE_DEFAULT) CryptoEngine.MASTER_REF_ANDROID else null
         val file = BackupFile(
             format = BackupCodec.FORMAT,
@@ -194,18 +597,24 @@ class VaultRepository(private val store: VaultStore) {
                 encoding = "base64",
                 masterRef = masterRef,
             ),
-            data = BackupData(meta = m.copy(openid = null), items = store.readItems()),
+            data = BackupData(
+                meta = m.copy(
+                    openid = null,
+                    schemaVersion = VaultMeta.SCHEMA_V1,
+                    auxSaltB64 = "",
+                    auxSecretEnc = "",
+                    auxSecretIv = "",
+                ),
+                items = store.readItems(slot),
+            ),
         )
         return BackupCodec.encode(file)
     }
 
     /**
-     * 导入备份并覆盖本地：
-     * - 备份无 meta → 清空本地
-     * - custom 备份 → meta+items 原样落地（之后输主密码解锁）
-     * - Android default 备份（masterRef=penly-def-v1）→ 原样落地
-     * - 小程序 default 备份（wxb-def-v1::openid）→ 校验后解密、重加密为本地默认密钥
-     * 导入完成即锁定。
+     * 导入备份并覆盖本地 —— **重建双槽位**：备份数据落到随机槽位，
+     * 另一槽位用无人知晓的随机密码建立占位数据。
+     * 导入完成即锁定；aux 凭证在首次解锁时补齐（见 [ensureAuxProvisioned]）。
      */
     suspend fun importJson(text: String): ImportResult {
         val file = try {
@@ -220,34 +629,113 @@ class VaultRepository(private val store: VaultStore) {
             return ImportResult(ImportType.WIPED, 0)
         }
         val items = file.data.items
-        if (m.pwdMode == VaultMeta.MODE_DEFAULT) {
-            val sourceMaster = when (file.crypto.masterRef) {
-                CryptoEngine.MASTER_REF_ANDROID -> CryptoEngine.ANDROID_DEFAULT_MASTER
-                null, CryptoEngine.MASTER_REF_WXB ->
-                    m.openid?.let { CryptoEngine.WXB_DEFAULT_PREFIX + it }
-                        ?: throw ImportException("该备份为「默认保护」且缺少身份标识，无法解锁")
-                else -> throw ImportException("未知的密钥来源（${file.crypto.masterRef}），无法解锁")
-            }
-            val srcKey = CryptoEngine.deriveKeyB64(sourceMaster, m.saltB64)
-            if (!CryptoEngine.verifyMaster(srcKey, m.verifyB64, m.verifyIvB64)) {
-                throw ImportException("备份校验失败，文件可能已损坏")
-            }
-            // 重加密为本地默认密钥，落一套全新 meta（新 salt + 新校验串）
-            val newSaltB64 = CryptoEngine.randomSaltB64()
-            val targetKey = CryptoEngine.deriveKeyB64(CryptoEngine.ANDROID_DEFAULT_MASTER, newSaltB64)
-            val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(targetKey)
-            val now = System.currentTimeMillis()
-            store.writeItems(reEncryptItems(items, srcKey, targetKey))
-            store.writeMeta(VaultMeta(newSaltB64, newVerify, newVerifyIv, VaultMeta.MODE_DEFAULT, true, now, now))
+
+        if (m.pwdMode != VaultMeta.MODE_DEFAULT) {
+            // custom：原样落地，解锁交给锁屏
+            rebuildBothSlots(m.copy(openid = null), items)
+            SessionManager.lock()
+            return ImportResult(ImportType.RESTORED, items.size)
+        }
+
+        val sourceMaster = when (file.crypto.masterRef) {
+            CryptoEngine.MASTER_REF_ANDROID -> CryptoEngine.ANDROID_DEFAULT_MASTER
+            null, CryptoEngine.MASTER_REF_WXB ->
+                m.openid?.let { CryptoEngine.WXB_DEFAULT_PREFIX + it }
+                    ?: throw ImportException("该备份为「默认保护」且缺少身份标识，无法解锁")
+            else -> throw ImportException("未知的密钥来源（${file.crypto.masterRef}），无法解锁")
+        }
+        val srcKey = CryptoEngine.deriveKeyB64(sourceMaster, m.saltB64)
+        if (!CryptoEngine.verifyMaster(srcKey, m.verifyB64, m.verifyIvB64)) {
+            throw ImportException("备份校验失败，文件可能已损坏")
+        }
+
+        if (file.crypto.masterRef == CryptoEngine.MASTER_REF_ANDROID) {
+            // 本应用 default 备份：原样落地
+            rebuildBothSlots(m.copy(openid = null), items)
             SessionManager.lock()
             return ImportResult(ImportType.REENCRYPTED, items.size)
         }
-        // custom：原样落地，解锁交给锁屏
-        store.writeMeta(m.copy(openid = null))
-        store.writeItems(items)
+
+        // 小程序 default 备份：解密后用本地默认密钥重加密
+        val newSaltB64 = CryptoEngine.randomSaltB64()
+        val targetKey = CryptoEngine.deriveKeyB64(CryptoEngine.ANDROID_DEFAULT_MASTER, newSaltB64)
+        val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(targetKey)
+        val now = System.currentTimeMillis()
+        val reEnc = reEncryptItems(items, srcKey, targetKey)
+        rebuildBothSlots(
+            VaultMeta(newSaltB64, newVerify, newVerifyIv, VaultMeta.MODE_DEFAULT, true, now, now),
+            reEnc,
+        )
         SessionManager.lock()
-        return ImportResult(ImportType.RESTORED, items.size)
+        return ImportResult(ImportType.REENCRYPTED, items.size)
     }
+
+    /** 清空两个槽位后重建：真实数据落随机槽位，另一槽位放无人能解的占位数据 */
+    private suspend fun rebuildBothSlots(realMetaSource: VaultMeta, realItems: List<VaultItem>) {
+        val real = Slot.random()
+        val peer = real.other()
+        val now = System.currentTimeMillis()
+        val createdAt = realMetaSource.createdAt.takeIf { it > 0 } ?: now
+
+        store.clearAll()
+        store.writeMeta(
+            real,
+            realMetaSource.copy(
+                schemaVersion = VaultMeta.SCHEMA_V2,
+                createdAt = createdAt,
+                auxSaltB64 = "",
+                auxSecretEnc = "",
+                auxSecretIv = "",
+            ),
+        )
+        store.writeItems(real, realItems)
+
+        val peerPassword = CryptoEngine.randomHex(32)
+        val peerSaltB64 = CryptoEngine.randomSaltB64()
+        val peerKey = CryptoEngine.deriveKeyB64(peerPassword, peerSaltB64)
+        val (peerVerify, peerVerifyIv) = CryptoEngine.makeVerify(peerKey)
+        val peerItems = encryptEntries(ShadowVaultGenerator.generate(realItems), peerKey)
+        peerKey.fill(0)
+
+        store.writeItems(peer, peerItems)
+        store.writeMeta(
+            peer,
+            VaultMeta(
+                saltB64 = peerSaltB64,
+                verifyB64 = peerVerify,
+                verifyIvB64 = peerVerifyIv,
+                pwdMode = realMetaSource.pwdMode,
+                createdAt = createdAt, // 与真库槽位同值
+                updatedAt = createdAt,
+                schemaVersion = VaultMeta.SCHEMA_V2,
+            ),
+        )
+    }
+
+    // ---------------- 工具 ----------------
+
+    /** 明文条目 → 密文条目（用指定密钥；影子数据用影子槽位的密钥） */
+    private fun encryptEntries(entries: List<PlainEntry>, key: ByteArray): List<VaultItem> =
+        entries.map { e ->
+            fun enc(s: String): Pair<String, String> =
+                if (s.isEmpty()) "" to "" else {
+                    val p = CryptoEngine.aesEncrypt(s, key)
+                    p.dataB64 to p.ivB64
+                }
+            val (aE, aI) = enc(e.account)
+            val (sE, sI) = enc(e.secret)
+            val (nE, nI) = enc(e.note)
+            VaultItem(
+                id = e.id,
+                title = e.title,
+                category = e.category,
+                accountEnc = aE, accountIv = aI,
+                secretEnc = sE, secretIv = sI,
+                noteEnc = nE, noteIv = nI,
+                createdAt = e.createdAt,
+                updatedAt = e.updatedAt,
+            )
+        }
 
     /** 用 oldKey 解密、newKey 重加密全部条目的三个密文字段 */
     private fun reEncryptItems(items: List<VaultItem>, oldKey: ByteArray, newKey: ByteArray): List<VaultItem> {

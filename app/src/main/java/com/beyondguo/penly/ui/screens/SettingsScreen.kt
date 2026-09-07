@@ -237,6 +237,19 @@ fun SettingsScreen(
                         },
                     )
                 }
+                // 入口刻意中性、无状态标记、无强调样式：
+                // 任何"已开启"提示都会让旁人一眼看出存在第二套数据
+                SettingRow(
+                    title = "高级保护",
+                    subtitle = "另一把钥匙，打开另一份数据",
+                    onClick = { onOpen("protection") },
+                )
+                // 首个联网功能：入口处即点明"联网"，不隐藏
+                SettingRow(
+                    title = "安全体检",
+                    subtitle = "检查密码是否出现在泄露库中（联网）",
+                    onClick = { onOpen("scan") },
+                )
             }
 
             SectionTitle("数据")
@@ -348,8 +361,16 @@ fun SettingsScreen(
                     enabled = bioMaster.isNotEmpty(),
                     onClick = {
                         scope.launch {
-                            if (!repo.unlock(bioMaster)) {
+                            // 用 verifyPassword 而非 unlock：只校验、不切换会话，
+                            // 万一用户输入的是应急密码也不会把会话带进另一份数据
+                            if (!repo.verifyPassword(bioMaster)) {
                                 bioError = "主密码错误"
+                                return@launch
+                            }
+                            // 应急密码同样能通过校验，但不能用来配置指纹 ——
+                            // 那会让指纹直接打开另一份数据，用户却以为进的是主库
+                            if (!repo.isPrimary()) {
+                                bioError = "该密码不可用于指纹解锁"
                                 return@launch
                             }
                             BioManager.saveMaster(

@@ -49,6 +49,12 @@ object CryptoEngine {
 
     fun randomSaltB64(): String = Base64.getEncoder().encodeToString(randomBytes(SALT_LEN_BYTES))
 
+    /**
+     * n 字节随机串的十六进制表示。
+     * 用于「占位槽位密码」这类一次性秘密：生成后即弃，无人知晓（包括用户自己）。
+     */
+    fun randomHex(nBytes: Int): String = randomBytes(nBytes).joinToString("") { "%02x".format(it) }
+
     fun genId(): String {
         val hex = randomBytes(8).joinToString("") { "%02x".format(it) }
         return "a_$hex${java.lang.Long.toString(System.currentTimeMillis(), 36)}"

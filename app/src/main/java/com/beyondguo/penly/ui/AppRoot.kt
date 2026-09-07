@@ -30,7 +30,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.beyondguo.penly.data.VaultRepository
 import com.beyondguo.penly.penly
+import com.beyondguo.penly.ui.screens.AdvancedProtectionScreen
 import com.beyondguo.penly.ui.screens.ChangePwdScreen
+import com.beyondguo.penly.ui.screens.SecurityScanScreen
 import com.beyondguo.penly.ui.screens.DetailScreen
 import com.beyondguo.penly.ui.screens.EditScreen
 import com.beyondguo.penly.ui.screens.ListScreen
@@ -41,6 +43,8 @@ import com.beyondguo.penly.ui.screens.SettingsScreen
 private object Routes {
     const val LIST = "list"
     const val SETTINGS = "settings"
+    const val PROTECTION = "protection"
+    const val SCAN = "scan"
 
     fun edit(itemId: String = "") = "edit?itemId=$itemId"
 }
@@ -56,7 +60,11 @@ fun AppRoot() {
 
     var initialized by remember { mutableStateOf<Boolean?>(null) }
     var refreshKey by remember { mutableIntStateOf(0) }
-    LaunchedEffect(refreshKey) { initialized = repo.isInitialized() }
+    LaunchedEffect(refreshKey) {
+        // v1 单槽位 → v2 双槽位迁移；无 legacy 数据时立即返回，成本可忽略
+        repo.migrateIfNeeded()
+        initialized = repo.isInitialized()
+    }
     val refresh: () -> Unit = { refreshKey++ }
 
     when {
@@ -113,6 +121,18 @@ private fun ReadyRoot(repo: VaultRepository, onVaultChanged: () -> Unit) {
                     repo = repo,
                     onVaultChanged = onVaultChanged,
                     onOpen = { navController.navigate(it) },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(Routes.PROTECTION) {
+                AdvancedProtectionScreen(
+                    repo = repo,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(Routes.SCAN) {
+                SecurityScanScreen(
+                    repo = repo,
                     onBack = { navController.popBackStack() },
                 )
             }
