@@ -205,14 +205,24 @@ class VaultRepository(private val store: VaultStore) {
         val jobB = async(Dispatchers.Default) { tryUnlock(Slot.B, master) }
         val keyA = jobA.await() // 不得短路：两路都必须跑完
         val keyB = jobB.await()
-        val hit = when {
-            keyA != null -> Slot.A to keyA
-            keyB != null -> Slot.B to keyB
-            else -> null
-        } ?: return@coroutineScope false
-        SessionManager.establish(hit.second, hit.first)
+        val hit: Pair<Slot, ByteArray>? = if (keyA != null && keyB != null) {
+            // 两槽位被同一个密码解开 = 主密码与应急密码相同（异常状态）。
+            // 必须挑出主库槽位：若固定选 A，真库在 B 时用户就被送进影子库，
+            // 之后 isPrimary() 恒 false，改密码 / 设应急密码等操作会全部被拒。
+            // 该分支只有异常数据才会走进；正常数据两槽位密码必然不同（见两处同密校验）。
+            val aIsPrimary = withContext(Dispatchers.Default) { isPrimarySlot(Slot.A, keyA) }
+            if (aIsPrimary) Slot.A to keyA else Slot.B to keyB
+        } else if (keyA != null) {
+            Slot.A to keyA
+        } else if (keyB != null) {
+            Slot.B to keyB
+        } else {
+            null
+        }
+        val target = hit ?: return@coroutineScope false
+        SessionManager.establish(target.second, target.first)
         primaryCache = null
-        withContext(Dispatchers.Default) { ensureAuxProvisioned(hit.first, hit.second) }
+        withContext(Dispatchers.Default) { ensureAuxProvisioned(target.first, target.second) }
         true
     }
 
@@ -268,9 +278,19 @@ class VaultRepository(private val store: VaultStore) {
      */
     suspend fun isPrimary(): Boolean {
         val slot = SessionManager.activeSlotOrNull() ?: return false
+        return isPrimarySlot(slot, SessionManager.requireKey())
+    }
+
+    /**
+     * [isPrimary] 的底层实现：给定槽位及其密钥，判断该槽位是否为主库。
+     *
+     * 与 [isPrimary] 的区别是不从 [SessionManager] 取槽位与密钥——解锁判定途中
+     * 会话尚未建立，同样需要判断"这个槽位是不是主库"。
+     */
+    private suspend fun isPrimarySlot(slot: Slot, key: ByteArray): Boolean {
         val m = store.readMeta(slot) ?: return false
         val peerMeta = store.readMeta(slot.other()) ?: return false
-        val aux = readAuxSecret(m, SessionManager.requireKey()) ?: return false
+        val aux = readAuxSecret(m, key) ?: return false
         val peerKey = CryptoEngine.deriveKeyB64(aux, peerMeta.saltB64)
         val ok = CryptoEngine.verifyMaster(peerKey, peerMeta.verifyB64, peerMeta.verifyIvB64)
         peerKey.fill(0)
@@ -318,6 +338,15 @@ class VaultRepository(private val store: VaultStore) {
         val peer = slot.other()
         val m = store.readMeta(slot) ?: return "印迹尚未初始化"
         val key = SessionManager.requireKey()
+
+        // 应急密码不得与主密码相同：一旦相同，两个槽位会被同一密码同时解开，
+        // 解锁时无法凭密码区分主次，可能把用户送进影子库（详见 unlock 的同密码分支）。
+        // 判据：用主库 salt 派生应急密码，若结果与当前会话密钥一致，则两者是同一密码。
+        val duressKey = CryptoEngine.deriveKeyB64(duress, m.saltB64)
+        val sameAsMaster = duressKey.contentEquals(key)
+        duressKey.fill(0)
+        if (sameAsMaster) return "应急密码不能与主密码相同"
+
         val oldPeerMeta = store.readMeta(peer)
 
         val newSaltB64 = CryptoEngine.randomSaltB64()
@@ -534,6 +563,12 @@ class VaultRepository(private val store: VaultStore) {
             return "旧主密码错误"
         }
         val auxSecret = readAuxSecret(m, oldKey)
+        // 新主密码不得与应急密码相同，理由同上：两槽位同密码会让解锁槽位不可判。
+        // 未设置应急密码时 auxSecret 是无人知晓的随机密码，不可能与用户输入相等。
+        if (auxSecret != null && auxSecret == newPlain) {
+            oldKey.fill(0)
+            return "主密码不能与应急密码相同"
+        }
 
         val newSaltB64 = CryptoEngine.randomSaltB64()
         val newKey = CryptoEngine.deriveKeyB64(newPlain, newSaltB64)
