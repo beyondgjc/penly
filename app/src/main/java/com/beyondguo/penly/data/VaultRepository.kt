@@ -332,7 +332,7 @@ class VaultRepository(private val store: VaultStore) {
         if (duress.length < CryptoEngine.MASTER_MIN_LEN) {
             return "应急密码至少 ${CryptoEngine.MASTER_MIN_LEN} 位"
         }
-        if (!isPrimaryCached()) return "当前会话不支持此操作"
+        if (!isPrimaryCached()) return null // 影子会话静默 noop：不写任何槽位，返回成功以避免暴露当前是影子库
 
         val slot = SessionManager.activeSlotOrNull() ?: return "印迹未解锁"
         val peer = slot.other()
@@ -550,6 +550,7 @@ class VaultRepository(private val store: VaultStore) {
      * 只作用于**当前槽位**；aux 秘密用新密钥重新加密，保证影子数据仍可自动同步。
      */
     suspend fun changeMasterPassword(oldPlain: String?, newPlain: String): String? {
+        if (!isPrimaryCached()) return null // 影子会话静默 noop：既不破坏主↔影关联，也不暴露当前是影子库
         if (newPlain.length < CryptoEngine.MASTER_MIN_LEN) {
             return "主密码至少 ${CryptoEngine.MASTER_MIN_LEN} 位"
         }

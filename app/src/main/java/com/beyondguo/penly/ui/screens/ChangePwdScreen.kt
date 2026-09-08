@@ -72,8 +72,11 @@ fun ChangePwdScreen(repo: VaultRepository, mode: String, onDone: () -> Unit) {
         scope.launch {
             val err = repo.changeMasterPassword(if (isSet) null else oldPwd, newPwd)
             if (err == null) {
-                // 旧主密码的指纹副本已失效，清除（需重新开启指纹解锁）
-                com.beyondguo.penly.bio.BioManager.clear(context)
+                // 仅主库会话真正改密后才清除指纹副本；影子会话为 noop，
+                // 绝不触碰全局指纹状态（否则会误清真库的指纹副本）
+                if (repo.isPrimary()) {
+                    com.beyondguo.penly.bio.BioManager.clear(context)
+                }
                 android.widget.Toast.makeText(context, "主密码已更新", android.widget.Toast.LENGTH_SHORT).show()
                 onDone()
             } else {

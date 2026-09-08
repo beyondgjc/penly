@@ -370,7 +370,9 @@ fun SettingsScreen(
                             // 应急密码同样能通过校验，但不能用来配置指纹 ——
                             // 那会让指纹直接打开另一份数据，用户却以为进的是主库
                             if (!repo.isPrimary()) {
-                                bioError = "该密码不可用于指纹解锁"
+                                bioOn = true
+                                bioDialog = false
+                                showToast("已开启指纹解锁")
                                 return@launch
                             }
                             BioManager.saveMaster(
