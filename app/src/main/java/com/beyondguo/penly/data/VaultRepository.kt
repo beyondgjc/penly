@@ -7,6 +7,12 @@ import com.beyondguo.penly.backup.BackupFile
 import com.beyondguo.penly.backup.BackupFormatException
 import com.beyondguo.penly.crypto.CryptoEngine
 import com.beyondguo.penly.crypto.SessionManager
+import com.beyondguo.penly.search.Embedder
+import com.beyondguo.penly.search.NoopEmbedder
+import com.beyondguo.penly.search.SearchEntry
+import com.beyondguo.penly.search.SearchIndex
+import com.beyondguo.penly.search.SearchOutcome
+import com.beyondguo.penly.search.SmartSearcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -222,7 +228,11 @@ class VaultRepository(private val store: VaultStore) {
         val target = hit ?: return@coroutineScope false
         SessionManager.establish(target.second, target.first)
         primaryCache = null
-        withContext(Dispatchers.Default) { ensureAuxProvisioned(target.first, target.second) }
+        withContext(Dispatchers.Default) {
+            ensureAuxProvisioned(target.first, target.second)
+            // 检索索引在解锁后后台构建；未接入模型时 isReady=false，此处零开销跳过
+            if (embedder.isReady) rebuildSearchIndexInternal()
+        }
         true
     }
 
@@ -260,7 +270,10 @@ class VaultRepository(private val store: VaultStore) {
         return unlock(CryptoEngine.ANDROID_DEFAULT_MASTER)
     }
 
-    fun lock() = SessionManager.lock()
+    fun lock() {
+        searchIndex.clear() // 锁定即销毁：向量从不落盘，清空内存即可，无残留风险
+        SessionManager.lock()
+    }
 
     // ---------------- 影子保险库 ----------------
 
@@ -306,6 +319,13 @@ class VaultRepository(private val store: VaultStore) {
      */
     @Volatile
     private var primaryCache: Boolean? = null
+
+    // ---- 端内 AI 检索：索引纯内存，不落盘（见《印迹_端内AI检索_技术方案.md》§3.2）----
+    private val searchIndex = SearchIndex()
+
+    /** 向量化实现；二期接入端侧模型时替换，索引无需任何迁移 */
+    @Volatile
+    private var embedder: Embedder = NoopEmbedder
 
     private suspend fun isPrimaryCached(): Boolean {
         if (!SessionManager.isUnlocked()) {
@@ -468,6 +488,90 @@ class VaultRepository(private val store: VaultStore) {
         }
     }
 
+    // ---------------- 端内 AI 检索（一期：纯内存索引，不落盘） ----------------
+
+    /**
+     * 重建**当前解锁槽位**的检索索引。
+     *
+     * 只索引当前槽位——真库与影子库各自独立，严禁跨槽位混合，
+     * 否则影子会话会读到真库语义，直接破坏不可证伪性（方案 §4）。
+     * 影子库会话同样会走到这里，索引的是影子自己的条目，行为与真库一致。
+     */
+    suspend fun rebuildSearchIndex() = withContext(Dispatchers.Default) {
+        if (!embedder.isReady) return@withContext
+        searchIndex.clear()
+        rebuildSearchIndexInternal()
+    }
+
+    private suspend fun rebuildSearchIndexInternal() {
+        val slot = SessionManager.activeSlotOrNull() ?: return
+        val entries = ArrayList<SearchEntry>()
+        for (item in store.readItems(slot)) entries.add(item.toSearchEntry())
+        val vectors = embedder.embedAll(entries.map { it.embedText })
+        entries.forEachIndexed { i, e -> searchIndex.put(e, vectors.getOrNull(i)) }
+    }
+
+    /** 条目变更后增量更新索引；索引尚未建立则跳过（下次解锁会全量重建） */
+    private suspend fun updateSearchIndex(itemId: String) {
+        if (!embedder.isReady || searchIndex.size == 0) return
+        val slot = SessionManager.activeSlotOrNull() ?: return
+        val item = store.readItems(slot).firstOrNull { it.id == itemId }
+        if (item == null) {
+            searchIndex.remove(itemId)
+            return
+        }
+        val entry = item.toSearchEntry()
+        if (searchIndex.contains(itemId) && searchIndex.isUpToDate(entry)) return
+        searchIndex.put(entry, embedder.embed(entry.embedText))
+    }
+
+    /** 语义检索：语义命中优先 + 关键词补充；未启用语义时自动降级为纯关键词 */
+    suspend fun smartSearch(query: String): SearchOutcome =
+        SmartSearcher(embedder, searchIndex).search(query)
+
+    /** 语义检索是否可用（UI 据此决定是否展示信任标签与「为什么匹配」） */
+    fun isSemanticReady(): Boolean = embedder.isReady && searchIndex.hasVectors
+
+    /**
+     * 替换向量化实现（二期接入端侧模型 / 更换模型时调用）。
+     *
+     * 由于索引不落盘，换模型**不需要任何数据迁移**——清空后下次解锁即按新模型重算。
+     */
+    fun setEmbedder(newEmbedder: Embedder) {
+        embedder.close()
+        embedder = newEmbedder
+        searchIndex.clear()
+    }
+
+    /**
+     * 构造待索引条目。
+     *
+     * `secret` **明确不入索引**：密码本身没有检索语义，入索引只会扩大敏感面（方案 §3.1）。
+     */
+    private suspend fun VaultItem.toSearchEntry(): SearchEntry {
+        val account = if (accountEnc.isBlank()) "" else decryptAccount(this)
+        val note = if (noteEnc.isBlank()) "" else runCatching {
+            CryptoEngine.aesDecrypt(
+                CryptoEngine.EncPayload(noteIv, noteEnc),
+                SessionManager.requireKey(),
+            )
+        }.getOrDefault("")
+        return SearchEntry(
+            itemId = id,
+            keywordText = listOf(title, category, account).joinToString(" ").lowercase(),
+            embedText = buildEmbedText(title, category, account, note),
+        )
+    }
+
+    /** 嵌入文本：结构化短句；模板与字段权重需用中文语料实测标定（方案 §3.1） */
+    private fun buildEmbedText(title: String, category: String, account: String, note: String): String =
+        buildString {
+            append("标题：").append(title)
+            append("\n分类：").append(category.ifBlank { "默认" })
+            if (account.isNotBlank()) append("\n账号：").append(account)
+            if (note.isNotBlank()) append("\n备注：").append(note)
+        }
+
     // ---------------- 条目 CRUD ----------------
 
     suspend fun items(): List<VaultItem> =
@@ -534,13 +638,19 @@ class VaultRepository(private val store: VaultStore) {
         )
         store.upsertItem(slot, newItem)
         // 影子同步含 PBKDF2，必须离开主线程；且只在条目数差异越阈时才真的动手
-        withContext(Dispatchers.Default) { syncShadowIfNeeded() }
+        withContext(Dispatchers.Default) {
+            syncShadowIfNeeded()
+            updateSearchIndex(newItem.id)
+        }
         return newItem.id
     }
 
     suspend fun deleteItem(id: String) {
         store.deleteItem(SessionManager.requireSlot(), id)
-        withContext(Dispatchers.Default) { syncShadowIfNeeded() }
+        withContext(Dispatchers.Default) {
+            syncShadowIfNeeded()
+            updateSearchIndex(id)
+        }
     }
 
     // ---------------- 修改主密码 / 重置 ----------------
@@ -605,7 +715,7 @@ class VaultRepository(private val store: VaultStore) {
     /** 重置印迹：清空两个槽位（忘记主密码场景） */
     suspend fun resetVault() {
         store.clearAll()
-        SessionManager.lock()
+        lock() // 顺带清空检索索引
     }
 
     // ---------------- 导出 / 导入 ----------------
@@ -661,7 +771,7 @@ class VaultRepository(private val store: VaultStore) {
         val m = file.data.meta
         if (m == null) {
             store.clearAll()
-            SessionManager.lock()
+            lock()
             return ImportResult(ImportType.WIPED, 0)
         }
         val items = file.data.items
@@ -669,7 +779,7 @@ class VaultRepository(private val store: VaultStore) {
         if (m.pwdMode != VaultMeta.MODE_DEFAULT) {
             // custom：原样落地，解锁交给锁屏
             rebuildBothSlots(m.copy(openid = null), items)
-            SessionManager.lock()
+            lock()
             return ImportResult(ImportType.RESTORED, items.size)
         }
 
@@ -688,7 +798,7 @@ class VaultRepository(private val store: VaultStore) {
         if (file.crypto.masterRef == CryptoEngine.MASTER_REF_ANDROID) {
             // 本应用 default 备份：原样落地
             rebuildBothSlots(m.copy(openid = null), items)
-            SessionManager.lock()
+            lock()
             return ImportResult(ImportType.REENCRYPTED, items.size)
         }
 
