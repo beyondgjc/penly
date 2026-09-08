@@ -61,10 +61,13 @@ dependencies {
     // 其 FragmentActivity 对 requestCode 强校验"仅低 16 位"，与 Activity Result API
     // 默认 registry 的随机 requestCode 冲突，launch 文件选择器时必现 crash。
     // fragment 1.3.0+ 已移除该校验（1.7.1 兼容 compileSdk 34）。
-    implementation("androidx.fragment:fragment-ktx:1.7.1")
+    implementation(libs.androidx.fragment.ktx)
     implementation(libs.kotlinx.serialization.json)
+    // 汉字 → 拼音首字母：列表 A–Z 分组与右侧索引条需要（纯 Java，无传递依赖，
+    // 在 Maven Central 上；tinypinyin 只发 JitPack 且坐标不可用，故选 pinyin4j）
+    implementation(libs.pinyin4j)
     testImplementation(libs.junit)
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
     debugImplementation(libs.androidx.ui.tooling)
 }
