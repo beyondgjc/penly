@@ -20,6 +20,12 @@ interface Embedder {
     suspend fun embed(text: String): FloatArray?
 
     /**
+     * 查询文本向量化。部分模型（如 bge/e5）检索场景要求查询侧加指令前缀，
+     * 与文档侧区分对待；默认实现与 [embed] 相同，无不对称处理的模型无需关心。
+     */
+    suspend fun embedForQuery(text: String): FloatArray? = embed(text)
+
+    /**
      * 批量向量化。默认逐条调用 [embed]；
      * 真实实现应覆写以摊薄模型调用的固定开销（逐条调用会放大数十倍）。
      */

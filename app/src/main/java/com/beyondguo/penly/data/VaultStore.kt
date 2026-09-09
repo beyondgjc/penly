@@ -24,6 +24,9 @@ private val Context.penlyDataStore: androidx.datastore.core.DataStore<Preference
  */
 class VaultStore(private val context: Context) {
 
+    /** 供 VaultRepository 等读取 assets（端内模型装载）用；应用级 context，防泄漏 Activity */
+    internal val appContext: Context = context.applicationContext
+
     private val json = Json { ignoreUnknownKeys = true }
 
     private companion object {

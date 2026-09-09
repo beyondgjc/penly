@@ -10,8 +10,8 @@ package com.beyondguo.penly.search
  * 降级：embedder 未就绪或索引尚未建成时，只返回关键词结果并置 [SearchOutcome.degraded]，
  * 行为与改造前完全一致，不阻断使用。
  *
- * ⚠️ [DEFAULT_THRESHOLD] 取自上游方案的经验值，**必须用中文语料重新标定**，
- * 不同模型的向量分布与归一化方式不同，照搬会导致误召回或全不命中。
+ * ℹ️ [DEFAULT_THRESHOLD] 已用 bge-small-zh-v1.5 中文评测标定（见 companion object 注释）；
+ * 不同模型的向量分布与归一化方式不同，换模型后必须重新标定，照搬会导致误召回或全不命中。
  */
 class SmartSearcher(
     private val embedder: Embedder,
@@ -36,7 +36,7 @@ class SmartSearcher(
 
         val semantic: List<Pair<String, Float>> =
             if (embedder.isReady && index.hasVectors) {
-                val qv = embedder.embed(query)
+                val qv = embedder.embedForQuery(query)
                 if (qv != null) index.topK(qv, topK, threshold) else emptyList()
             } else {
                 emptyList()
@@ -63,7 +63,14 @@ class SmartSearcher(
 
     companion object {
         const val DEFAULT_TOP_K = 5
-        const val DEFAULT_THRESHOLD = 0.55f
+
+        /**
+         * 已用中文语料标定（ChineseRecallEvalTest + BareEntryProbeTest，bge-small-zh-v1.5 int8、无查询前缀）：
+         * 11 条零字面重叠语义查询全部 Top-1 命中，命中分 0.562–0.718；
+         * 裸条目（仅标题）探针命中 0.428–0.505 → 0.42 全保留命中。
+         * 换模型或改前缀后必须重跑评测重新标定。
+         */
+        const val DEFAULT_THRESHOLD = 0.42f
     }
 }
 

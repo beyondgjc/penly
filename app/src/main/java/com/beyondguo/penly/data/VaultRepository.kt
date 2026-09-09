@@ -1,5 +1,6 @@
 package com.beyondguo.penly.data
 
+import android.util.Log
 import com.beyondguo.penly.backup.BackupCodec
 import com.beyondguo.penly.backup.BackupCrypto
 import com.beyondguo.penly.backup.BackupData
@@ -8,14 +9,18 @@ import com.beyondguo.penly.backup.BackupFormatException
 import com.beyondguo.penly.crypto.CryptoEngine
 import com.beyondguo.penly.crypto.SessionManager
 import com.beyondguo.penly.search.Embedder
+import com.beyondguo.penly.search.EmbedderFactory
 import com.beyondguo.penly.search.NoopEmbedder
 import com.beyondguo.penly.search.SearchEntry
 import com.beyondguo.penly.search.SearchIndex
 import com.beyondguo.penly.search.SearchOutcome
 import com.beyondguo.penly.search.SmartSearcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** 备份导入失败（可向用户展示的中文信息） */
@@ -230,10 +235,32 @@ class VaultRepository(private val store: VaultStore) {
         primaryCache = null
         withContext(Dispatchers.Default) {
             ensureAuxProvisioned(target.first, target.second)
-            // 检索索引在解锁后后台构建；未接入模型时 isReady=false，此处零开销跳过
+        }
+        // 检索引擎懒加载（首次解锁时装载 ~24MB 模型）+ 索引后台重建：
+        // 走独立 scope，**不阻塞 unlock 返回**；失败自动降级 Noop（纯关键词检索）
+        ensureSemanticEngineAsync()
+        true
+    }
+
+    /** 检索后台任务 scope：SupervisorJob，任务失败不影响其它任务与解锁主链路 */
+    private val searchScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    private fun ensureSemanticEngineAsync() {
+        Log.d("PenlySearch", "解锁成功，开始懒加载检索引擎")
+        searchScope.launch {
+            if (!embedder.isReady) {
+                val t0 = System.currentTimeMillis()
+                val created = EmbedderFactory.create(store.appContext)
+                if (created.isReady) {
+                    embedder.close()
+                    embedder = created
+                    Log.d("PenlySearch", "Embedder 就绪：bge-small-zh-v1.5(int8)，装载耗时=${System.currentTimeMillis() - t0}ms")
+                } else {
+                    Log.w("PenlySearch", "Embedder 装载失败，降级为纯关键词检索")
+                }
+            }
             if (embedder.isReady) rebuildSearchIndexInternal()
         }
-        true
     }
 
     /** 尝试用 [master] 解开 [slot]；空槽位也会走一次完整派生以保证耗时一致 */
@@ -507,8 +534,16 @@ class VaultRepository(private val store: VaultStore) {
         val slot = SessionManager.activeSlotOrNull() ?: return
         val entries = ArrayList<SearchEntry>()
         for (item in store.readItems(slot)) entries.add(item.toSearchEntry())
+        val t0 = System.currentTimeMillis()
         val vectors = embedder.embedAll(entries.map { it.embedText })
         entries.forEachIndexed { i, e -> searchIndex.put(e, vectors.getOrNull(i)) }
+        // 只打计数与耗时，不落任何条目内容
+        Log.d(
+            "PenlySearch",
+            "检索索引已重建：slot=${if (slot == Slot.A) "A" else "B"}，" +
+                "条目=${entries.size}，向量缺失=${vectors.count { it == null }}，" +
+                "耗时=${System.currentTimeMillis() - t0}ms",
+        )
     }
 
     /** 条目变更后增量更新索引；索引尚未建立则跳过（下次解锁会全量重建） */

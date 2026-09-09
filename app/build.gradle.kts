@@ -66,8 +66,18 @@ dependencies {
     // 汉字 → 拼音首字母：列表 A–Z 分组与右侧索引条需要（纯 Java，无传递依赖，
     // 在 Maven Central 上；tinypinyin 只发 JitPack 且坐标不可用，故选 pinyin4j）
     implementation(libs.pinyin4j)
+    // 端内 AI 检索：ONNX Runtime（Android CPU 推理）+ bge-small-zh-v1.5 int8 模型（assets/models/）
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     testImplementation(libs.junit)
+    // JVM 单测跑中文召回评测用桌面版 onnxruntime（与 Android 版同一套 ai.onnxruntime API）
+    testImplementation("com.microsoft.onnxruntime:onnxruntime:1.20.0")
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     debugImplementation(libs.androidx.ui.tooling)
+}
+
+// 单测运行时排除 Android 版 ORT：其 AAR 只有移动端 native 库，
+// 桌面 JVM 加载会失败，且与桌面版 jar 的 ai.onnxruntime 类重复
+configurations.matching { it.name == "testRuntimeClasspath" }.all {
+    exclude(group = "com.microsoft.onnxruntime", module = "onnxruntime-android")
 }

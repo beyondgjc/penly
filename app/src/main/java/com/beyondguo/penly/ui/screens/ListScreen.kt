@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beyondguo.penly.data.VaultItem
 import com.beyondguo.penly.data.VaultRepository
+import com.beyondguo.penly.search.SmartSearcher
 import com.beyondguo.penly.ui.components.MonogramAvatar
 import com.beyondguo.penly.ui.theme.PenBgSoft
 import com.beyondguo.penly.ui.theme.PenGreen
@@ -97,6 +98,21 @@ fun ListScreen(repo: VaultRepository, onOpen: (String) -> Unit, onSettings: () -
         (listOf("全部") + items.map { it.category.ifBlank { "默认" } }.distinct())
     }
     val kw = keyword.trim().lowercase()
+
+    // 语义检索（端内 AI）：输入防抖 250ms 后调用 smartSearch。
+    // - 引擎未就绪时返回纯关键词结果且 semanticUsed=false，追加去重后无任何变化，无害降级
+    // - 语义命中**不限定当前分类**（搜索是明确意图）；显示时按字母归入各自分组并带 AI 角标
+    var semanticHits by remember { mutableStateOf<List<SmartSearcher.Hit>>(emptyList()) }
+    LaunchedEffect(kw) {
+        if (kw.isEmpty()) {
+            semanticHits = emptyList()
+        } else {
+            kotlinx.coroutines.delay(250) // 防抖：避免逐键触发 embedding
+            val outcome = repo.smartSearch(keyword.trim())
+            if (kw == keyword.trim().lowercase()) semanticHits = outcome.hits // 输入已变化则丢弃过期结果
+        }
+    }
+
     val filtered = items.filter {
         val catOk = activeCat == "全部" || (it.category.ifBlank { "默认" }) == activeCat
         val kwOk = kw.isEmpty() ||
@@ -104,6 +120,12 @@ fun ListScreen(repo: VaultRepository, onOpen: (String) -> Unit, onSettings: () -
             it.category.lowercase().contains(kw) ||
             (accounts[it.id] ?: "").lowercase().contains(kw)
         catOk && kwOk
+    }.let { kwHits ->
+        // 关键词命中在前，语义补充在后（按相关度），按 itemId 去重
+        val kwIds = kwHits.mapTo(HashSet()) { it.id }
+        val semanticOnly = semanticHits.mapNotNull { hit -> items.firstOrNull { it.id == hit.itemId } }
+            .filter { it.id !in kwIds }
+        if (semanticOnly.isEmpty()) kwHits else kwHits + semanticOnly
     }
     // 归并到 A–Z（中文取拼音首字母），索引条因此恒定 ≤27 项；
     // 组内按标题排序，组间按字母序，# 组排最后（与系统通讯录一致）。
@@ -137,6 +159,8 @@ fun ListScreen(repo: VaultRepository, onOpen: (String) -> Unit, onSettings: () -
         }
     }
     val showIndex = headerIndex.size >= INDEX_MIN_GROUPS
+    /** 语义命中的条目 id 集合，行内显示 AI 角标 */
+    val semanticHitIds = remember(semanticHits) { semanticHits.map { it.itemId }.toSet() }
 
     Column(
         Modifier
@@ -230,7 +254,12 @@ fun ListScreen(repo: VaultRepository, onOpen: (String) -> Unit, onSettings: () -
                                 )
                             }
                             items(list, key = { it.id }) { item ->
-                                VaultRow(item = item, account = accounts[item.id] ?: "", onClick = { onOpen(item.id) })
+                                VaultRow(
+                                    item = item,
+                                    account = accounts[item.id] ?: "",
+                                    semantic = item.id in semanticHitIds,
+                                    onClick = { onOpen(item.id) },
+                                )
                             }
                         }
                     }
@@ -326,7 +355,7 @@ private fun AlphabetIndexBar(
 }
 
 @Composable
-private fun VaultRow(item: VaultItem, account: String, onClick: () -> Unit) {
+private fun VaultRow(item: VaultItem, account: String, onClick: () -> Unit, semantic: Boolean = false) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -337,13 +366,24 @@ private fun VaultRow(item: VaultItem, account: String, onClick: () -> Unit) {
         MonogramAvatar(item.title.ifBlank { "?" }, 44.dp)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                item.title.ifBlank { "（无标题）" },
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    item.title.ifBlank { "（无标题）" },
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (semantic) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "AI",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PenGreen,
+                    )
+                }
+            }
             if (account.isNotBlank()) {
                 Text(
                     account,

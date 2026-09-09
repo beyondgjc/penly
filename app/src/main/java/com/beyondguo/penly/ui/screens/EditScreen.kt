@@ -41,11 +41,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.beyondguo.penly.data.VaultRepository
 import com.beyondguo.penly.ui.components.ConfirmDialog
 import com.beyondguo.penly.ui.components.MonogramAvatar
@@ -120,6 +118,9 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
         }
     }
 
+    // 保存中吞掉系统返回：避免页面销毁取消保存协程导致条目丢失（与 ✕ 守卫同理）
+    androidx.activity.compose.BackHandler(enabled = busy) { }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -132,7 +133,9 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = { onDone(false) }) {
+            // 保存中禁止关闭：页面销毁会取消 rememberCoroutineScope，
+            // 保存协程在挂起点被 kill 会导致条目静默丢失 / 语义索引缺漏
+            IconButton(onClick = { if (!busy) onDone(false) }) {
                 Icon(Icons.Filled.Close, contentDescription = "关闭")
             }
             Text(
