@@ -8,3 +8,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# release 签名材料：永不入库（keystore 文件本体存放在仓库外的 release/ 目录）
+*.jks
+*.keystore
+keystore.properties
