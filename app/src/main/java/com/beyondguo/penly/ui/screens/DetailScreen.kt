@@ -157,9 +157,10 @@ fun DetailScreen(
                     HorizontalLine()
 
                     // 密码行：点行复制并揭示明文（与参考一致，无显式开关）
+                    // 空密码不套掩码，让 emptyText 的「（空）」透出（bug：空密码行永远显示星星）
                     ValueRow(
                         label = "密码",
-                        value = if (secretVisible) e.secret else "••••••••••",
+                        value = if (e.secret.isEmpty()) "" else if (secretVisible) e.secret else "••••••••••",
                         emptyText = if (e.secret.isEmpty()) "（空）" else null,
                         modifier = Modifier.clickable {
                             if (e.secret.isNotEmpty()) {
