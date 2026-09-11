@@ -628,6 +628,8 @@ class VaultRepository(private val store: VaultStore) {
             secret = dec(item.secretEnc, item.secretIv),
             note = dec(item.noteEnc, item.noteIv),
             totp = dec(item.totpEnc, item.totpIv),
+            totpDigits = item.totpDigits,
+            totpPeriod = item.totpPeriod,
             createdAt = item.createdAt,
             updatedAt = item.updatedAt,
         )
@@ -641,7 +643,7 @@ class VaultRepository(private val store: VaultStore) {
             SessionManager.requireKey(),
         )
 
-    /** 新增或更新（title/category 明文索引，account/secret/note/totp 加密） */
+    /** 新增或更新（title/category 明文索引，account/secret/note/totp 加密；totp 参数非敏感明文存储） */
     suspend fun saveEntry(
         id: String?,
         title: String,
@@ -650,6 +652,8 @@ class VaultRepository(private val store: VaultStore) {
         secret: String,
         note: String,
         totpSecret: String = "",
+        totpDigits: Int = 0,
+        totpPeriod: Int = 0,
     ): String {
         val key = SessionManager.requireKey()
         val slot = SessionManager.requireSlot()
@@ -672,6 +676,7 @@ class VaultRepository(private val store: VaultStore) {
             secretEnc = sE, secretIv = sI,
             noteEnc = nE, noteIv = nI,
             totpEnc = tE, totpIv = tI,
+            totpDigits = totpDigits, totpPeriod = totpPeriod,
             createdAt = old?.createdAt ?: now,
             updatedAt = now,
         )

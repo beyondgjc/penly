@@ -111,9 +111,9 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
             error = "至少填写 名称 / 账号 / 密码 一项"
             return
         }
-        // 2FA 密钥规范化：支持 base32 串或 otpauth:// 链接；非法则拦截保存
-        val totpNorm = if (totp.isBlank()) "" else try {
-            Totp.normalizeSecretInput(totp)
+        // 2FA 密钥规范化：支持 base32 串或 otpauth:// 链接（含 digits/period 参数）；非法则拦截保存
+        val totpParams = if (totp.isBlank()) null else try {
+            Totp.parseInput(totp)
         } catch (e: Exception) {
             error = "2FA 密钥格式不正确（应为 base32 串或 otpauth 链接）"
             return
@@ -128,7 +128,9 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
                     account = account,
                     secret = secret,
                     note = note,
-                    totpSecret = totpNorm,
+                    totpSecret = totpParams?.secret ?: "",
+                    totpDigits = totpParams?.digits ?: 0,
+                    totpPeriod = totpParams?.period ?: 0,
                 )
                 android.widget.Toast.makeText(context, "已保存", android.widget.Toast.LENGTH_SHORT).show()
                 onDone(false)

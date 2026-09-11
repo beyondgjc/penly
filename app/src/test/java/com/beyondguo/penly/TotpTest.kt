@@ -63,26 +63,52 @@ class TotpTest {
         assertEquals("foo".encodeToByteArray().toList(), Totp.base32Decode(" MZXW 6=== ").toList())
     }
 
-    /** otpauth:// 链接自动提取 secret */
+    /** otpauth:// 链接提取 secret 与 digits/period 参数 */
     @Test
     fun otpauth_uri_extraction() {
-        assertEquals(
-            "JBSWY3DPEHPK3PXP",
-            Totp.normalizeSecretInput("otpauth://totp/GitHub:user?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"),
+        val p = Totp.parseInput("otpauth://totp/GitHub:user?secret=JBSWY3DPEHPK3PXP&issuer=GitHub")
+        assertEquals("JBSWY3DPEHPK3PXP", p.secret)
+        assertEquals(6, p.digits)
+        assertEquals(30, p.period)
+    }
+
+    /** 链接自带 digits/period 时必须采用（网站校验用同一组参数） */
+    @Test
+    fun otpauth_uri_custom_params() {
+        val p = Totp.parseInput(
+            "otpauth://totp/Bank:x?secret=JBSWY3DPEHPK3PXP&digits=8&period=60",
         )
-        assertEquals(
-            "JBSWY3DPEHPK3PXP",
-            Totp.normalizeSecretInput("jbsw y3dp-ehpk 3pxp"),
-        )
+        assertEquals("JBSWY3DPEHPK3PXP", p.secret)
+        assertEquals(8, p.digits)
+        assertEquals(60, p.period)
+    }
+
+    /** 裸 base32 输入：规范化 + 默认参数 */
+    @Test
+    fun bare_base32_defaults() {
+        val p = Totp.parseInput(" jbsw y3dp-ehpk 3pxp ")
+        assertEquals("JBSWY3DPEHPK3PXP", p.secret)
+        assertEquals(6, p.digits)
+        assertEquals(30, p.period)
+    }
+
+    /** period 语义：同一 period 下窗口滚动一致，不同 period 计数器错开 */
+    @Test
+    fun period_changes_window_alignment() {
+        val s = rfcSecret
+        // period=60 时 t=89 与 t=119 落在同一窗口（counter 均为 1）
+        assertEquals(Totp.generate(s, 89, 6, 60), Totp.generate(s, 119, 6, 60))
+        // period=30 时这两个时刻分属不同窗口（counter 2 与 3）
+        org.junit.Assert.assertNotEquals(Totp.generate(s, 89, 6, 30), Totp.generate(s, 119, 6, 30))
     }
 
     /** 非法输入必须抛错（由 UI 层转错误提示，不允许静默存入坏密钥） */
     @Test
     fun invalid_inputs_rejected() {
         assertThrows(IllegalArgumentException::class.java) { Totp.base32Decode("abc012") } // 含 0/1
-        assertThrows(IllegalArgumentException::class.java) { Totp.normalizeSecretInput("") }
+        assertThrows(IllegalArgumentException::class.java) { Totp.parseInput("") }
         assertThrows(IllegalArgumentException::class.java) {
-            Totp.normalizeSecretInput("otpauth://totp/x?issuer=GitHub") // 缺 secret
+            Totp.parseInput("otpauth://totp/x?issuer=GitHub") // 缺 secret
         }
         assertThrows(IllegalArgumentException::class.java) { Totp.generate(ByteArray(0), 59) }
     }

@@ -89,6 +89,12 @@ data class VaultItem(
      */
     @SerialName("totpEnc") val totpEnc: String = "",
     @SerialName("totpIv") val totpIv: String = "",
+    /**
+     * TOTP 展示/刷新参数（非敏感，明文存储；0 = 用默认 6 位 / 30 秒）。
+     * 由 otpauth:// 链接参数下发，网站校验用同一组值，验证器必须保持一致。
+     */
+    @SerialName("totpDigits") val totpDigits: Int = 0,
+    @SerialName("totpPeriod") val totpPeriod: Int = 0,
     @SerialName("createdAt") val createdAt: Long = 0,
     @SerialName("updatedAt") val updatedAt: Long = 0,
 )
@@ -103,6 +109,9 @@ data class PlainEntry(
     val note: String,
     /** TOTP 共享密钥（base32 串，未规范化原值可为空） */
     val totp: String = "",
+    /** TOTP 参数（0 = 用默认 6 位 / 30 秒） */
+    val totpDigits: Int = 0,
+    val totpPeriod: Int = 0,
     val createdAt: Long,
     val updatedAt: Long,
 )
