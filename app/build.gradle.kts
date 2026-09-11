@@ -96,6 +96,8 @@ dependencies {
     // 汉字 → 拼音首字母：列表 A–Z 分组与右侧索引条需要（纯 Java，无传递依赖，
     // 在 Maven Central 上；tinypinyin 只发 JitPack 且坐标不可用，故选 pinyin4j）
     implementation(libs.pinyin4j)
+    // 扫码录入 2FA 密钥（v3.0 项目④）：自带取景 Activity 与相机权限流程
+    implementation(libs.zxing.android.embedded)
     // 端内 AI 检索：ONNX Runtime（Android CPU 推理）+ bge-small-zh-v1.5 int8 模型（assets/models/）
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     testImplementation(libs.junit)

@@ -1,5 +1,6 @@
 package com.beyondguo.penly.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -53,6 +55,8 @@ import com.beyondguo.penly.ui.theme.PenDangerSoft
 import com.beyondguo.penly.ui.theme.PenLine
 import com.beyondguo.penly.ui.theme.PenText1
 import com.beyondguo.penly.ui.theme.PenText3
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.launch
 
 /**
@@ -77,6 +81,12 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
     var busy by remember { mutableStateOf(false) }
     var prefilled by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+
+    // 扫码录入 2FA 密钥：zxing 取景 Activity 返回的通常是 otpauth:// 链接或裸密钥，
+    // 两种形态都交给 save 时的 normalizeSecretInput 统一处理
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        result.contents?.let { totp = it; error = "" }
+    }
 
     LaunchedEffect(itemId) {
         if (isEdit && !prefilled) {
@@ -224,8 +234,30 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
             label = "2FA 密钥",
             value = totp,
             onValueChange = { totp = it; error = "" },
-            placeholder = "粘贴 base32 或 otpauth 链接",
+            placeholder = "粘贴或点右侧扫码",
             focusRequester = rowFocus,
+            trailing = {
+                IconButton(
+                    onClick = {
+                        scanLauncher.launch(
+                            ScanOptions().apply {
+                                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                setPrompt("对准网站的 2FA 二维码")
+                                setBeepEnabled(false)
+                                // zxing 默认锁横屏（老条码扫描器惯性）；放开后跟随竖屏，
+                                // 与应用整体交互一致（用户反馈：扫码页横屏体验差）
+                                setOrientationLocked(false)
+                            },
+                        )
+                    },
+                ) {
+                    Icon(
+                        Icons.Filled.QrCodeScanner,
+                        contentDescription = "扫码",
+                        tint = PenText3,
+                    )
+                }
+            },
         )
         FlatDivider()
         FlatInputRow(
