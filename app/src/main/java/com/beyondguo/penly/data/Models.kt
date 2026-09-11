@@ -82,6 +82,13 @@ data class VaultItem(
     @SerialName("secretIv") val secretIv: String = "",
     @SerialName("noteEnc") val noteEnc: String = "",
     @SerialName("noteIv") val noteIv: String = "",
+    /**
+     * TOTP 两步验证共享密钥（v3.0 项目④）：base32 串，与密码同等待遇逐字段加密。
+     * 缺省空串 = 无 2FA —— 旧数据/旧备份反序列化自动兼容，无需迁移。
+     * ⚠️ 隐式契约：密文缺失即无 2FA，任何消费方不得改为显式判空键。
+     */
+    @SerialName("totpEnc") val totpEnc: String = "",
+    @SerialName("totpIv") val totpIv: String = "",
     @SerialName("createdAt") val createdAt: Long = 0,
     @SerialName("updatedAt") val updatedAt: Long = 0,
 )
@@ -94,6 +101,8 @@ data class PlainEntry(
     val account: String,
     val secret: String,
     val note: String,
+    /** TOTP 共享密钥（base32 串，未规范化原值可为空） */
+    val totp: String = "",
     val createdAt: Long,
     val updatedAt: Long,
 )

@@ -627,6 +627,7 @@ class VaultRepository(private val store: VaultStore) {
             account = dec(item.accountEnc, item.accountIv),
             secret = dec(item.secretEnc, item.secretIv),
             note = dec(item.noteEnc, item.noteIv),
+            totp = dec(item.totpEnc, item.totpIv),
             createdAt = item.createdAt,
             updatedAt = item.updatedAt,
         )
@@ -640,7 +641,7 @@ class VaultRepository(private val store: VaultStore) {
             SessionManager.requireKey(),
         )
 
-    /** 新增或更新（title/category 明文索引，account/secret/note 加密） */
+    /** 新增或更新（title/category 明文索引，account/secret/note/totp 加密） */
     suspend fun saveEntry(
         id: String?,
         title: String,
@@ -648,6 +649,7 @@ class VaultRepository(private val store: VaultStore) {
         account: String,
         secret: String,
         note: String,
+        totpSecret: String = "",
     ): String {
         val key = SessionManager.requireKey()
         val slot = SessionManager.requireSlot()
@@ -659,6 +661,7 @@ class VaultRepository(private val store: VaultStore) {
         val (aE, aI) = enc(account)
         val (sE, sI) = enc(secret)
         val (nE, nI) = enc(note)
+        val (tE, tI) = enc(totpSecret)
         val now = System.currentTimeMillis()
         val old = id?.let { item(it) }
         val newItem = VaultItem(
@@ -668,6 +671,7 @@ class VaultRepository(private val store: VaultStore) {
             accountEnc = aE, accountIv = aI,
             secretEnc = sE, secretIv = sI,
             noteEnc = nE, noteIv = nI,
+            totpEnc = tE, totpIv = tI,
             createdAt = old?.createdAt ?: now,
             updatedAt = now,
         )
@@ -918,7 +922,7 @@ class VaultRepository(private val store: VaultStore) {
             )
         }
 
-    /** 用 oldKey 解密、newKey 重加密全部条目的三个密文字段 */
+    /** 用 oldKey 解密、newKey 重加密全部条目的四个密文字段（漏掉 totp 会改密后 2FA 不可恢复） */
     private fun reEncryptItems(items: List<VaultItem>, oldKey: ByteArray, newKey: ByteArray): List<VaultItem> {
         return items.map { it ->
             fun re(enc: String, iv: String): Pair<String, String> =
@@ -930,7 +934,8 @@ class VaultRepository(private val store: VaultStore) {
             val (aE, aI) = re(it.accountEnc, it.accountIv)
             val (sE, sI) = re(it.secretEnc, it.secretIv)
             val (nE, nI) = re(it.noteEnc, it.noteIv)
-            it.copy(accountEnc = aE, accountIv = aI, secretEnc = sE, secretIv = sI, noteEnc = nE, noteIv = nI)
+            val (tE, tI) = re(it.totpEnc, it.totpIv)
+            it.copy(accountEnc = aE, accountIv = aI, secretEnc = sE, secretIv = sI, noteEnc = nE, noteIv = nI, totpEnc = tE, totpIv = tI)
         }
     }
 }

@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.beyondguo.penly.crypto.Totp
 import com.beyondguo.penly.data.VaultRepository
 import com.beyondguo.penly.ui.components.ConfirmDialog
 import com.beyondguo.penly.ui.components.MonogramAvatar
@@ -71,6 +72,7 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
     var account by rememberSaveable { mutableStateOf("") }
     var secret by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
+    var totp by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var prefilled by rememberSaveable { mutableStateOf(false) }
@@ -86,6 +88,7 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
                     account = e.account
                     secret = e.secret
                     note = e.note
+                    totp = e.totp
                     prefilled = true
                 } catch (_: Exception) {
                 }
@@ -98,6 +101,13 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
             error = "至少填写 名称 / 账号 / 密码 一项"
             return
         }
+        // 2FA 密钥规范化：支持 base32 串或 otpauth:// 链接；非法则拦截保存
+        val totpNorm = if (totp.isBlank()) "" else try {
+            Totp.normalizeSecretInput(totp)
+        } catch (e: Exception) {
+            error = "2FA 密钥格式不正确（应为 base32 串或 otpauth 链接）"
+            return
+        }
         busy = true
         scope.launch {
             try {
@@ -108,6 +118,7 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
                     account = account,
                     secret = secret,
                     note = note,
+                    totpSecret = totpNorm,
                 )
                 android.widget.Toast.makeText(context, "已保存", android.widget.Toast.LENGTH_SHORT).show()
                 onDone(false)
@@ -206,6 +217,14 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
             value = secret,
             onValueChange = { secret = it; error = "" },
             placeholder = "请输入密码",
+            focusRequester = rowFocus,
+        )
+        FlatDivider()
+        FlatInputRow(
+            label = "2FA 密钥",
+            value = totp,
+            onValueChange = { totp = it; error = "" },
+            placeholder = "粘贴 base32 或 otpauth 链接",
             focusRequester = rowFocus,
         )
         FlatDivider()

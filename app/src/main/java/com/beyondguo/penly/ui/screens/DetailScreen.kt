@@ -1,5 +1,6 @@
 package com.beyondguo.penly.ui.screens
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -31,18 +33,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.beyondguo.penly.crypto.Totp
 import com.beyondguo.penly.data.PlainEntry
 import com.beyondguo.penly.data.VaultRepository
 import com.beyondguo.penly.ui.components.MonogramAvatar
+import com.beyondguo.penly.ui.theme.PenGreen
 import com.beyondguo.penly.ui.theme.PenLine
 import com.beyondguo.penly.ui.theme.PenText1
 import com.beyondguo.penly.ui.theme.PenText3
 import com.beyondguo.penly.util.copySensitive
 import com.beyondguo.penly.util.formatTime
+import kotlinx.coroutines.delay
 
 /**
  * 详情页（扁平风 v2，参考 MIUI 密码管理）：
@@ -162,6 +170,12 @@ fun DetailScreen(
                         },
                     )
 
+                    // 2FA 验证码卡（v3.0 项目④）：条目有 TOTP 密钥才渲染
+                    if (e.totp.isNotBlank()) {
+                        HorizontalLine()
+                        TotpCodeCard(secretInput = e.totp)
+                    }
+
                     if (e.note.isNotEmpty()) {
                         HorizontalLine()
                         Spacer(Modifier.height(14.dp))
@@ -224,4 +238,75 @@ private fun HorizontalLine() {
             .height(1.dp)
             .background(PenLine),
     )
+}
+
+/**
+ * 2FA 验证码卡（v3.0 项目④）：实时 6 位码（3+3 分组）+ 30s 圆环倒计时。
+ * 点击复制走 [copySensitive] —— 自动接剪贴板 60s 清除（项目②）。
+ * 密钥非法（解码失败）时整卡不渲染，避免展示坏数据。
+ */
+@Composable
+private fun TotpCodeCard(secretInput: String) {
+    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val context = LocalContext.current
+    val timeSec = nowMs / 1000
+    val normalized = remember(secretInput) {
+        runCatching { Totp.normalizeSecretInput(secretInput) }.getOrNull()
+    }
+    val code = normalized?.let { runCatching { Totp.generate(it, timeSec) }.getOrNull() }
+    if (code == null) return
+    val remaining = (30 - timeSec % 30).toInt()
+    val progress = remaining / 30f
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable {
+                copySensitive(context, "验证码", code)
+                android.widget.Toast.makeText(context, "验证码已复制", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            .padding(horizontal = 20.dp, vertical = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "2FA 验证码",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = PenText1,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                code.chunked(3).joinToString(" "),
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 2.sp,
+                ),
+                color = PenText1,
+            )
+        }
+        Canvas(Modifier.size(34.dp)) {
+            drawArc(
+                color = PenLine,
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                style = Stroke(width = 6f),
+            )
+            drawArc(
+                color = PenGreen,
+                startAngle = -90f,
+                sweepAngle = 360f * progress,
+                useCenter = false,
+                style = Stroke(width = 6f, cap = StrokeCap.Round),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text("${remaining}s", style = MaterialTheme.typography.bodySmall, color = PenText3)
+    }
 }
