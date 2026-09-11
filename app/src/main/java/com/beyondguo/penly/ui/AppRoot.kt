@@ -1,15 +1,21 @@
 package com.beyondguo.penly.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -17,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +35,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.beyondguo.penly.crypto.Totp
 import com.beyondguo.penly.data.VaultRepository
 import com.beyondguo.penly.penly
 import com.beyondguo.penly.ui.screens.AdvancedProtectionScreen
@@ -39,6 +47,9 @@ import com.beyondguo.penly.ui.screens.ListScreen
 import com.beyondguo.penly.ui.screens.LockScreen
 import com.beyondguo.penly.ui.screens.OnboardingScreen
 import com.beyondguo.penly.ui.screens.SettingsScreen
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.launch
 
 private object Routes {
     const val LIST = "list"
@@ -89,17 +100,64 @@ private fun ReadyRoot(repo: VaultRepository, onVaultChanged: () -> Unit) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val onList = backStackEntry?.destination?.route == Routes.LIST
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // 扫码新增（v3.0 项目④）：扫 otpauth 二维码 → 提取密钥/网站名/参数 → 自动建档 → 进详情页看实时码。
+    // 非法内容（非 otpauth 二维码）toast 提示且不建档。
+    val scanAddLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val raw = result.contents ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            try {
+                val p = Totp.parseInput(raw)
+                val title = p.displayName().ifBlank { "2FA 密钥" }
+                val id = repo.saveEntry(
+                    id = null,
+                    title = title,
+                    category = "",
+                    account = "",
+                    secret = "",
+                    note = "",
+                    totpSecret = p.secret,
+                    totpDigits = p.digits,
+                    totpPeriod = p.period,
+                )
+                android.widget.Toast.makeText(context, "已扫码添加：$title", android.widget.Toast.LENGTH_SHORT).show()
+                navController.navigate("detail/$id")
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, "不是有效的 2FA 二维码", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     Scaffold(
         // 内容区自行处理状态栏/导航栏留白（各页 statusBarsPadding/navigationBarsPadding）
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         floatingActionButton = {
             if (onList) {
-                FloatingActionButton(
-                    onClick = { navController.navigate(Routes.edit()) },
+                Column(
+                    horizontalAlignment = Alignment.End,
                     modifier = Modifier.padding(end = 8.dp, bottom = 36.dp),
                 ) {
-                    Icon(Icons.Filled.Add, contentDescription = "添加")
+                    SmallFloatingActionButton(
+                        onClick = {
+                            scanAddLauncher.launch(
+                                ScanOptions().apply {
+                                    setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                    setPrompt("对准网站的 2FA 二维码")
+                                    setBeepEnabled(false)
+                                },
+                            )
+                        },
+                    ) {
+                        Icon(Icons.Filled.QrCode2, contentDescription = "扫码新增")
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    FloatingActionButton(
+                        onClick = { navController.navigate(Routes.edit()) },
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = "添加")
+                    }
                 }
             }
         },

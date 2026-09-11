@@ -29,12 +29,29 @@ object Totp {
     const val DEFAULT_PERIOD = 30
 
     /**
-     * 解析结果：规范化 base32 密钥 + 网站指定的展示/刷新参数。
+     * 解析结果：规范化 base32 密钥 + 网站指定的展示/刷新参数 + 建档用显示名。
      * @param secret 规范化 base32 密钥串
      * @param digits 验证码位数（6 = 缺省）
      * @param period 刷新间隔秒（30 = 缺省）
+     * @param label otpauth 路径里的显示名（惯例"站点:账号"，URL 解码后）；手输为 null
+     * @param issuer otpauth issuer 参数（网站名，URL 解码后）；手输为 null
      */
-    data class Params(val secret: String, val digits: Int, val period: Int)
+    data class Params(
+        val secret: String,
+        val digits: Int,
+        val period: Int,
+        val label: String? = null,
+        val issuer: String? = null,
+    ) {
+        /** 扫码建档用显示名：优先 issuer，其次 label 的"站点:"前缀，再退 label 本身 */
+        fun displayName(): String {
+            issuer?.takeIf { it.isNotBlank() }?.let { return it }
+            label?.takeIf { it.isNotBlank() }?.let { l ->
+                return l.substringBefore(':').trim().ifBlank { l.trim() }
+            }
+            return ""
+        }
+    }
 
     /**
      * Base32 解码（RFC 4648）。
@@ -115,6 +132,9 @@ object Totp {
         if (!s.startsWith("otpauth://", ignoreCase = true)) {
             return Params(normalizeBase32(s), DEFAULT_DIGITS, DEFAULT_PERIOD)
         }
+        // otpauth://totp/Label?secret=..&issuer=..&digits=..&period=..
+        val body = s.substringAfter("://")
+        val path = body.substringAfter('/', "").substringBefore('?')
         val query = s.substringAfter('?', "")
         val params = query.split('&')
             .mapNotNull {
@@ -126,7 +146,12 @@ object Totp {
         require(secret.isNotEmpty()) { "链接中未找到 secret 参数" }
         val digits = params["digits"]?.toIntOrNull()?.takeIf { it in 1..9 } ?: DEFAULT_DIGITS
         val period = params["period"]?.toIntOrNull()?.takeIf { it in 1..3600 } ?: DEFAULT_PERIOD
-        return Params(normalizeBase32(secret), digits, period)
+        // 显示名/网站名 URL 解码（容错：解码失败保留原值）
+        val label = runCatching { java.net.URLDecoder.decode(path, "UTF-8") }.getOrNull()?.takeIf { it.isNotBlank() }
+        val issuer = params["issuer"]?.let {
+            runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrNull()
+        }?.takeIf { it.isNotBlank() }
+        return Params(normalizeBase32(secret), digits, period, label, issuer)
     }
 
     private fun normalizeBase32(s: String): String {
