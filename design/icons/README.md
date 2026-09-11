@@ -1,35 +1,72 @@
-# 印迹 印迹 · 应用图标方案
+# 印迹 · 应用图标资产
 
-> 6 款矢量图标，统一套用品牌绿 `#07C160` 与 v2 扁平风，圆角 224/1024（≈22%）。
-> 矢量源文件为 SVG，可无损缩放至任意分辨率（含 App Store 1024px、Android xxxhdpi 192px、Favicon 等）。
+> 品牌绿 `#07C160` · 扁平风 · 矢量源为 SVG，可无损缩放到任意分辨率
+> （App Store 1024px、Android xxxhdpi 192px、Favicon 等）
 
-## ✅ 已采用方案
+## ✅ 已采用方案：指纹 v2
 
-**方案 6（指纹）** 已选定并落地到 Android 工程：
+**2026-09-11 改版**。v1 指纹在桌面真实尺寸下不可辨，且 Android 与 iOS 两端口径不一致，故重绘。
 
-- 自适应图标（minSdk 29 主要走这条）：`mipmap-anydpi/ic_launcher.xml` + `mipmap-anydpi/ic_launcher_round.xml` → `drawable/ic_launcher_background.xml`（品牌绿底）+ `drawable/ic_launcher_foreground.xml`（白色指纹）
-- 传统密度图标（v25 兜底）：`mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher{,_round}.png` 已全部替换为指纹 PNG（旧的默认绿网 webp 已移除）
-- 全套位图导出（Android / 商店 / 小程序 / iOS）见 `export/`，含 `render_icons_node.js` 渲染脚本（基于 `@resvg/resvg-js`，纯二进制、无系统依赖）
-- 合成源：`yinji-icon-6-composite.svg`（绿底圆角 + 白指纹，用于位图导出）
+### v1 → v2 改了什么
 
-## 方案一览
-
-| 编号 | 文件 | 视觉 | 适用调性 |
+| 项 | v1 | v2 | 原因 |
 |---|---|---|---|
-| 1 | `yinji-icon-1-shield.svg` | 绿底 + 白盾牌 + 绿钥匙孔 | 经典安全语义，强识别（**推荐首选**） |
-| 2 | `yinji-icon-2-lock.svg` | 白底 + 绿智能锁 | 干净轻盈，贴近系统原生风格 |
-| 3 | `yinji-icon-3-vault.svg` | 绿底 + 白保险箱 | 强调「本地自托管保险箱」 |
-| 4 | `yinji-icon-4-key.svg` | 浅绿底 `#E6F9EF` + 绿钥匙 | 柔和差异化，显轻快 |
-| 5 | `yinji-icon-5-hexagon.svg` | 绿六边形 + 白钥匙孔 | 几何现代感，科技/加密调性 |
-| 6 | `yinji-icon-6-fingerprint.svg` | 绿底 + 白指纹 | 呼应 App 的生物识别解锁能力 |
+| 描边宽度 | `30`（画布 2.9%） | **`76`（7.4%）** | 48px 下 1.4px → 3.6px，小尺寸才看得见 |
+| 脊线间距 | 24–40 不等 | **统一 74**（7.2%） | 间距不均会让小尺寸的线条糊成一坨 |
+| 字形重心 | 偏下 32px（3.1%） | **居中** | v1 视觉重量左倾 |
+| 脊线条数 | 4 条（含 1 条孤立大弧） | **3 条**（2 弧 + 1 指芯） | v1 的 `M512 352 a200 200…` 与其余三条不成体系，末端凭空断掉 |
+| 字形占位 | 合成图 30.5% / 自适应前景 52% | **两端口径统一 64%** | 见下 |
 
-## 预览
-浏览器打开 `preview.html` 可横向对比 6 款。
+### 字形占位口径（关键，勿单改一侧）
+
+统一为 **字形外接盒 = 可见区域的 64%**：
+
+- **合成图标**（iOS / 商店 / 小程序 / 旧版 Android）：字形 = 画布 **655.36px**（64%）
+- **Android 自适应**（108dp 画布 / 72dp 可见区 / 66dp 安全区）：字形 = **46.08dp**（可见区 64%）
+  - 换算：`p_108 = 54 + 0.0681657 × (p_1024 − 512/510)`
+  - 已实测落在 66dp 安全区内（对角半径 32.11dp < 33dp），圆 / 方圆 / 方形遮罩均不裁切
+
+> ⚠️ **不要单独改其中一条链路。** 合成源与 `app/src/main/res/drawable/ic_launcher_foreground.xml`
+> 必须同时按上式重算，否则又会退回 v1 那种「Android 上饱满、iOS 上缩小」的双轨不一致。
+
+## 文件与产物
+
+| 文件 | 作用 |
+|---|---|
+| `yinji-icon-6-fingerprint.svg` | 合成图标源（1024 画布，含底色圆角方）——**唯一真源** |
+| `yinji-icon-6-composite.svg` | 与上者内容一致；`render_icons_node.js` 的渲染入口 |
+| `render_icons_node.js` | 一次渲染、**双写**：`export/**`（跨平台归档）+ `app/src/main/res/mipmap-**`（工程实际引用） |
+| `yinji-icon-1..5-*.svg` | 早期备选方案，仅留档，未接入 |
+| `preview.html` | 浏览器打开可横向对比 6 款方案 |
+| `export/` | Android / iOS / 商店 / 小程序全套位图 |
+
+### 生成的位图（`node render_icons_node.js`）
+
+| 平台 | 尺寸 |
+|---|---|
+| Android mipmap | mdpi 48 · hdpi 72 · xhdpi 96 · xxhdpi 144 · xxxhdpi 192（`ic_launcher` + `ic_launcher_round`） |
+| 应用商店 | 512 · 1024 |
+| 小程序 | 144 · 512 |
+| iOS | 60@2x 120 · 60@3x 180 · 1024 |
+
+## Android 侧接入状态
+
+- `mipmap-anydpi/ic_launcher.xml` + `ic_launcher_round.xml`：**自适应图标（已接入）**
+  - `<background>` → `drawable/ic_launcher_background.xml`（108dp 全出血纯 `#07C160`，不加圆角）
+  - `<foreground>` → `drawable/ic_launcher_foreground.xml`（108dp 视口，字形 46.08dp）
+  - `<monochrome>` → 复用前景层（Android 13+ 主题图标取 alpha 通道）
+- `mipmap-{mdpi..xxxhdpi}/ic_launcher{,_round}.png`：旧版 Android（<8）兜底位图
+
+> 注：`ic_launcher_round.png` 目前渲染的是圆角方形（沿用历史行为）。现代 Android 由系统遮罩负责圆形裁切，
+> 只有旧版圆角启动器才会用到这张图；若要严格圆形可另出一版。
 
 ## 落地建议
-- **Android 12+ 自适应图标**：当前为合成预览图；正式接入时按官方规范拆分为 **背景层（foreground/background）**，背景用纯 `#07C160`、前景用白色字形，交由系统遮罩（圆形/方圆形/squircle）裁切，保证多机型一致。
-- **iOS**：直接用合成 PNG（1024px 圆角由系统处理，源文件保留直角圆角 224 即可）。
-- **小程序**：微信对图标有圆角与尺寸要求，按平台导出对应 PNG。
-- 选定方案后，我可补充：① 各分辨率 PNG 导出脚本；② Android `mipmap-anydpi`/`ic_launcher` 自适应图标资源；③ 应用商店不同尺寸的变体（含圆角/留白微调）。
 
-> 设计来源：与 `yinji-figma-design-system.md` 的 Color Token 完全一致（brand `#07C160`、brand.soft `#E6F9EF`）。
+- **改字形**：只改 `yinji-icon-6-fingerprint.svg` → 跑 `render_icons_node.js` →
+  按 §字形占位口径 重算 `ic_launcher_foreground.xml`（生成脚本见工作区 `印迹图标改版/src/build_android_assets.cjs`）。
+- **iOS**：直接用合成 PNG，1024px 的圆角由系统处理，源文件保留 224 直角圆角即可。
+- **小程序**：微信对图标有圆角与尺寸要求，按平台导出对应 PNG。
+- **验证闭环**：重出位图 → `./gradlew :app:installDebug` → 桌面 + 设置「应用信息」+ 最近任务三处确认 →
+  圆形与方圆遮罩各看一次。
+
+> 设计来源：与 `yinji-figma-design-system.md` 的 Color Token 一致（brand `#07C160`、brand.soft `#E6F9EF`）。

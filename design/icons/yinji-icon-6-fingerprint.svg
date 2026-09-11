@@ -1,9 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- 印迹应用图标 · 指纹 v2（2026-09-11 改版）
+       规格：1024 画布 / 底色圆角 224（21.9%）/ 字形外接盒归一至画布 64%
+       与 v1 的差别：线宽 30→76（2.9%→7.4%，48px 下 1.4px→3.6px 才看得见）；
+                     三条脊线间距统一为 74；重心从偏下 32px 修正为居中；
+                     删掉 v1 里那条孤立的 M512 352 a200 200 大弧。 -->
   <rect width="1024" height="1024" rx="224" fill="#07C160"/>
-  <g fill="none" stroke="#FFFFFF" stroke-width="30" stroke-linecap="round">
-    <path d="M356 560 v-34 a156 156 0 0 1 312 0 v70"/>
-    <path d="M412 560 a100 100 0 0 1 200 0 v44 a78 78 0 0 1 -22 56"/>
-    <path d="M466 560 a46 46 0 0 1 92 0 v132 a44 44 0 0 1 -44 44 h-6"/>
-    <path d="M512 352 a200 200 0 0 1 168 92"/>
+  <g transform="translate(512 510) scale(0.96947) translate(-512 -510)"
+     fill="none" stroke="#FFFFFF" stroke-width="76"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M212 764 V520 A300 300 0 0 1 812 520 V700"/>
+    <path d="M362 784 V520 A150 150 0 0 1 662 520 V688"/>
+    <path d="M512 520 V800"/>
   </g>
 </svg>
