@@ -18,6 +18,10 @@ android {
     namespace = "com.beyondguo.penly"
     compileSdk = 34
 
+    // 设备测试默认针对 debug 构建（开发态）；release 混淆回归时用
+    // -PtestBuildType=release 切换，让 22 例设备测试直接跑在 R8 包上
+    testBuildType = (project.findProperty("testBuildType") as String?) ?: "debug"
+
     defaultConfig {
         applicationId = "com.beyondguo.penly"
         minSdk = 29
@@ -52,6 +56,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // 测试 APK（androidTest）被 R8 处理时的专用规则通道：测试包的 R8
+            // 不读 proguard-rules.pro，缺类抑制规则必须挂这里（proguard-test-rules.pro）
+            testProguardFiles("proguard-test-rules.pro")
         }
     }
     compileOptions {
