@@ -32,6 +32,20 @@
             android:name="com.journeyapps.barcodescanner.CaptureActivity"
             android:screenOrientation="portrait"
             tools:replace="android:screenOrientation" />
+
+        <!-- 系统自动填充服务（v3.0 项目⑤）：登录页填充/保存密码；exported=true 供系统绑定，BIND_AUTOFILL_SERVICE 权限保护 -->
+        <service
+            android:name=".autofill.PenlyAutofillService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_AUTOFILL_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.autofill.AutofillService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.autofill"
+                android:resource="@xml/autofill_service_config" />
+        </service>
     </application>
 
 </manifest>

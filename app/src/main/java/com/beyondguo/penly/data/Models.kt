@@ -97,6 +97,12 @@ data class VaultItem(
     @SerialName("totpPeriod") val totpPeriod: Int = 0,
     /** TOTP 哈希算法（SHA1/SHA256/SHA512；空串 = 缺省 SHA1），非敏感明文存储 */
     @SerialName("totpAlgo") val totpAlgo: String = "",
+    /**
+     * 条目来源 App 包名（v3.0 项目⑤ Autofill）：系统保存密码时记录"它属于哪个 App"，
+     * 填充时优先匹配（GitHub 的登录页只建议 GitHub 的条目）。非敏感明文存储；
+     * 空串 = 无来源（手动创建的条目，填充时全量展示）。
+     */
+    @SerialName("appPackage") val appPackage: String = "",
     @SerialName("createdAt") val createdAt: Long = 0,
     @SerialName("updatedAt") val updatedAt: Long = 0,
 )
@@ -116,6 +122,8 @@ data class PlainEntry(
     val totpPeriod: Int = 0,
     /** TOTP 哈希算法（空串 = 缺省 SHA1） */
     val totpAlgo: String = "",
+    /** 条目来源 App 包名（空串 = 手动创建，无来源匹配） */
+    val appPackage: String = "",
     val createdAt: Long,
     val updatedAt: Long,
 )

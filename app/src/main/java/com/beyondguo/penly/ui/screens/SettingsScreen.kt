@@ -97,6 +97,12 @@ fun SettingsScreen(
     var exportSavedPath by remember { mutableStateOf<String?>(null) }
     // 剪贴板自动清除开关：初值读 AppPrefs 内存缓存（Application.onCreate 已订阅 DataStore）
     var clipboardClearOn by remember { mutableStateOf(AppPrefs.clipboardAutoClear) }
+    // 系统自动填充启用状态（v3.0 项目⑤）：回到本页（从系统授权页返回）时刷新
+    val autofillManager = context.getSystemService(android.view.autofill.AutofillManager::class.java)
+    var autofillEnabled by remember { mutableStateOf(autofillManager?.hasEnabledAutofillServices() == true) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        autofillEnabled = autofillManager?.hasEnabledAutofillServices() == true
+    }
 
     fun showToast(msg: String) {
         toast = msg
@@ -255,6 +261,24 @@ fun SettingsScreen(
                                 scope.launch { AppPrefs.setClipboardAutoClear(context, on) }
                             },
                         )
+                    },
+                )
+                // 系统自动填充（v3.0 项目⑤）：入口中性，未启用时一键跳系统授权页
+                SettingRow(
+                    title = "系统自动填充",
+                    subtitle = if (autofillEnabled) "已启用：登录页自动填充账号密码"
+                    else "未启用：点按前往系统设置开启",
+                    onClick = if (autofillEnabled) null else {
+                        {
+                            runCatching {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.provider.Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE,
+                                        android.net.Uri.parse("package:${context.packageName}"),
+                                    ),
+                                )
+                            }.onFailure { showToast("请到 系统设置 → 密码与账户 → 自动填充服务 手动选择印迹") }
+                        }
                     },
                 )
                 // 入口刻意中性、无状态标记、无强调样式：
