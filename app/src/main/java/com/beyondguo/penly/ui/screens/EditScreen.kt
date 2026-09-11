@@ -77,6 +77,10 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
     var secret by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
     var totp by rememberSaveable { mutableStateOf("") }
+    // 条目已存的 TOTP 参数（0 = 无/默认）。编辑回存时裸 base32 输入必须保留这两个值，
+    // 否则扫码录入的 digits=8 条目改个备注就会被 parseInput 的默认 6/30 静默覆盖（P1）
+    var totpDigits by rememberSaveable { mutableStateOf(0) }
+    var totpPeriod by rememberSaveable { mutableStateOf(0) }
     var error by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var prefilled by rememberSaveable { mutableStateOf(false) }
@@ -99,6 +103,8 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
                     secret = e.secret
                     note = e.note
                     totp = e.totp
+                    totpDigits = e.totpDigits
+                    totpPeriod = e.totpPeriod
                     prefilled = true
                 } catch (_: Exception) {
                 }
@@ -111,9 +117,10 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
             error = "至少填写 名称 / 账号 / 密码 一项"
             return
         }
-        // 2FA 密钥规范化：支持 base32 串或 otpauth:// 链接（含 digits/period 参数）；非法则拦截保存
+        // 2FA 密钥规范化：支持 base32 串或 otpauth:// 链接（含 digits/period 参数）；非法则拦截保存。
+        // 参数保留语义见 Totp.resolveEditParams —— 裸 base32 输入沿用条目已存参数，链接参数优先
         val totpParams = if (totp.isBlank()) null else try {
-            Totp.parseInput(totp)
+            Totp.resolveEditParams(totp, totpDigits, totpPeriod)
         } catch (e: Exception) {
             error = "2FA 密钥格式不正确（应为 base32 串或 otpauth 链接）"
             return

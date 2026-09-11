@@ -102,6 +102,37 @@ class TotpTest {
         org.junit.Assert.assertNotEquals(Totp.generate(s, 89, 6, 30), Totp.generate(s, 119, 6, 30))
     }
 
+    /** 编辑回存语义（P1 回归锚）：裸 base32 输入保留条目已存参数，绝不能回落默认 6/30 */
+    @Test
+    fun resolveEditParams_bare_base32_preserves_stored_params() {
+        val uri = "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&digits=8&period=60"
+        val stored = Totp.parseInput(uri)
+        // 模拟编辑页：预填的是规范化 base32（不是链接），条目已存 8/60
+        val resolved = Totp.resolveEditParams(stored.secret, stored.digits, stored.period)
+        assertEquals(8, resolved.digits)
+        assertEquals(60, resolved.period)
+    }
+
+    /** 编辑回存：条目无参数（0/0，老数据或手输 base32 新建）回落默认 6/30 */
+    @Test
+    fun resolveEditParams_no_stored_params_falls_back_to_defaults() {
+        val resolved = Totp.resolveEditParams("JBSWY3DPEHPK3PXP", 0, 0)
+        assertEquals("JBSWY3DPEHPK3PXP", resolved.secret)
+        assertEquals(6, resolved.digits)
+        assertEquals(30, resolved.period)
+    }
+
+    /** 编辑回存：用户主动粘贴新 otpauth 链接时，链接参数优先于条目已存参数 */
+    @Test
+    fun resolveEditParams_uri_params_win() {
+        val resolved = Totp.resolveEditParams(
+            "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&digits=8&period=60",
+            6, 30,
+        )
+        assertEquals(8, resolved.digits)
+        assertEquals(60, resolved.period)
+    }
+
     /** 非法输入必须抛错（由 UI 层转错误提示，不允许静默存入坏密钥） */
     @Test
     fun invalid_inputs_rejected() {

@@ -154,6 +154,24 @@ object Totp {
         return Params(normalizeBase32(secret), digits, period, label, issuer)
     }
 
+    /**
+     * 编辑回存语义（P1 修复）：编辑页保存时解析输入并决定入库参数。
+     * - 输入是 otpauth 链接：链接参数优先（链接没带 digits/period 时回落默认 6/30）
+     * - 输入是裸 base32（含编辑预填的存量密钥——decryptItem 返回的就是规范化 base32 而非原始链接）：
+     *   **保留条目已存的 digits/period**，绝不能用 parseInput 的默认值覆盖，
+     *   否则扫码录入的 digits=8 条目改个备注就会被静默改回 6/30（回归 P1）
+     * @param storedDigits 条目当前存储的位数（0 = 无/默认）
+     * @param storedPeriod 条目当前存储的间隔（0 = 无/默认）
+     */
+    fun resolveEditParams(raw: String, storedDigits: Int, storedPeriod: Int): Params {
+        val p = parseInput(raw)
+        val fromUri = raw.trim().startsWith("otpauth://", ignoreCase = true)
+        return if (fromUri) p else p.copy(
+            digits = storedDigits.takeIf { it in 1..9 } ?: DEFAULT_DIGITS,
+            period = storedPeriod.takeIf { it in 1..3600 } ?: DEFAULT_PERIOD,
+        )
+    }
+
     private fun normalizeBase32(s: String): String {
         val clean = s.replace(" ", "").replace("-", "").uppercase()
         require(clean.isNotEmpty()) { "密钥为空" }
