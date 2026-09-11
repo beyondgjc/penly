@@ -5,13 +5,10 @@ import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
+import com.beyondguo.penly.data.AppPrefs
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
-private val clearHandler = Handler(Looper.getMainLooper())
 
 /** 复制敏感内容：Android 13+ 标记敏感（不进剪贴板预览/云剪贴板），60 秒后自动清空 */
 fun copySensitive(context: Context, label: String, text: String) {
@@ -23,11 +20,14 @@ fun copySensitive(context: Context, label: String, text: String) {
         }
     }
     cm.setPrimaryClip(clip)
-    // TODO 应用在后台获取不到剪切板
-    clearHandler.postDelayed({
-        val current = cm.primaryClip?.getItemAt(0)?.text?.toString()
-        if (current == text) cm.clearPrimaryClip()
-    }, 60_000)
+    // 清除调度收口 ClipboardGuard（v3.0 项目②三层保障：定时清 / 空 clip 兜底 / 回前台补偿）。
+    // 旧实现在延时任务里先读剪贴板比对再清 —— Android 10+ 后台读恒 null，
+    // 比对失败导致 clearPrimaryClip 永远不执行，且无 runCatching（MIUI 后台 clear 抛异常即崩）。
+    if (AppPrefs.clipboardAutoClear) {
+        ClipboardGuard.scheduleClear(context)
+    } else {
+        ClipboardGuard.cancelPending()
+    }
 }
 
 fun formatTime(ts: Long): String =

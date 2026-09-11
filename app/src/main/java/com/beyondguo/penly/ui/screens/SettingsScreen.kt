@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.beyondguo.penly.bio.BioManager
 import com.beyondguo.penly.crypto.CryptoEngine
+import com.beyondguo.penly.data.AppPrefs
 import com.beyondguo.penly.data.ImportType
 import com.beyondguo.penly.data.VaultMeta
 import com.beyondguo.penly.data.VaultRepository
@@ -55,6 +56,7 @@ import com.beyondguo.penly.ui.components.ConfirmDialog
 import com.beyondguo.penly.ui.components.SectionTitle
 import com.beyondguo.penly.ui.components.SettingCard
 import com.beyondguo.penly.ui.components.SettingRow
+import com.beyondguo.penly.util.ClipboardGuard
 import com.beyondguo.penly.ui.theme.PenDanger
 import com.beyondguo.penly.ui.theme.PenGreen
 import com.beyondguo.penly.ui.theme.PenText3
@@ -93,6 +95,8 @@ fun SettingsScreen(
     var showAbout by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf("") }
     var exportSavedPath by remember { mutableStateOf<String?>(null) }
+    // 剪贴板自动清除开关：初值读 AppPrefs 内存缓存（Application.onCreate 已订阅 DataStore）
+    var clipboardClearOn by remember { mutableStateOf(AppPrefs.clipboardAutoClear) }
 
     fun showToast(msg: String) {
         toast = msg
@@ -237,6 +241,22 @@ fun SettingsScreen(
                         },
                     )
                 }
+                // 剪贴板自动清除（v3.0 项目②）：复制的账号/密码 60 秒后自动清空，
+                // 压缩"复制完密码→剪贴板长期残留"这一横向泄露面
+                SettingRow(
+                    title = "剪贴板自动清除",
+                    subtitle = "复制的账号/密码 60 秒后自动清空剪贴板",
+                    trailing = {
+                        Switch(
+                            checked = clipboardClearOn,
+                            onCheckedChange = { on ->
+                                clipboardClearOn = on
+                                if (!on) ClipboardGuard.cancelPending()
+                                scope.launch { AppPrefs.setClipboardAutoClear(context, on) }
+                            },
+                        )
+                    },
+                )
                 // 入口刻意中性、无状态标记、无强调样式：
                 // 任何"已开启"提示都会让旁人一眼看出存在第二套数据
                 SettingRow(
@@ -296,7 +316,7 @@ fun SettingsScreen(
             SectionTitle("关于")
             SettingCard {
                 SettingRow(title = "加密说明", onClick = { showAbout = true })
-                SettingRow(title = "版本", trailing = { Text("1.0.0", color = PenText3) })
+                SettingRow(title = "版本", trailing = { Text("2.0.0", color = PenText3) })
             }
             Spacer(Modifier.height(16.dp))
             Text(
