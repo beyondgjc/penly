@@ -36,6 +36,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.beyondguo.penly.crypto.Totp
+import com.beyondguo.penly.crypto.VaultLockedException
 import com.beyondguo.penly.data.VaultRepository
 import com.beyondguo.penly.penly
 import com.beyondguo.penly.ui.screens.AdvancedProtectionScreen
@@ -125,6 +126,9 @@ private fun ReadyRoot(repo: VaultRepository, onVaultChanged: () -> Unit) {
                 )
                 android.widget.Toast.makeText(context, "已扫码添加：$title", android.widget.Toast.LENGTH_SHORT).show()
                 navController.navigate("detail/$id")
+            } catch (e: VaultLockedException) {
+                // 金库在扫码期间被 15s 自动锁兜底锁定（极少见：手动锁定/系统回收）
+                android.widget.Toast.makeText(context, "金库已锁定，请解锁印迹后重新扫码", android.widget.Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 android.widget.Toast.makeText(context, "不是有效的 2FA 二维码", android.widget.Toast.LENGTH_SHORT).show()
             }

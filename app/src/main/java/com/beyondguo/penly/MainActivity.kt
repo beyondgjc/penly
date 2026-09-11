@@ -50,13 +50,6 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    override fun onStart() {
-        super.onStart()
-        penly.onForeground()
-    }
-
-    override fun onStop() {
-        super.onStop()
-        penly.onBackground()
-    }
+    // 前后台判定已上移 PenlyApp（ActivityLifecycleCallbacks 按 started 计数）：
+    // 旧 onStop 钩子会把"被自家扫码页/文件选择器遮挡"误判为离开应用，导致 15 秒后锁库
 }
