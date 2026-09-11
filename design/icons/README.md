@@ -1,7 +1,6 @@
 # 印迹 · 应用图标资产
 
 > 品牌绿 `#07C160` · 扁平风 · 矢量源为 SVG，可无损缩放到任意分辨率
-> （App Store 1024px、Android xxxhdpi 192px、Favicon 等）
 
 ## ✅ 已采用方案：指纹 v2
 
@@ -17,7 +16,20 @@
 | 脊线条数 | 4 条（含 1 条孤立大弧） | **3 条**（2 弧 + 1 指芯） | v1 的 `M512 352 a200 200…` 与其余三条不成体系，末端凭空断掉 |
 | 字形占位 | 合成图 30.5% / 自适应前景 52% | **两端口径统一 64%** | 见下 |
 
-### 字形占位口径（关键，勿单改一侧）
+## ⚠️ 两个源，用途严格分开
+
+| 源文件 | 形状 | 用在哪 |
+|---|---|---|
+| `yinji-icon-6-fingerprint.svg`<br>`yinji-icon-6-composite.svg` | **圆角 rx=224 + 四角透明** | **仅 Android 传统 mipmap 位图**。Android 7 及以下的启动器直接原样显示位图，图标需要自带形状 |
+| `yinji-icon-6-square.svg` | **四边直角 + 满出血 + 无 alpha** | **iOS App Store / 应用商店列表图 / 微信小程序头像**。这些平台会【自己加遮罩】（iOS 超椭圆、微信裁圆形） |
+
+**为什么不能混用**：
+
+- iOS：App Store Connect **明确拒绝含 alpha 通道的图标**（`can't be transparent nor contain an alpha channel`）。圆角版带透明四角，直接上架被拒。
+- 微信小程序：官方要求上传 **144×144 正方形、四边直角**，并在客户端「切割为圆形效果」。自己加圆角既不符合规范，也浪费了字形安全边距。
+- Android 传统位图：反过来，旧启动器不裁切，所以位图必须自带圆角。
+
+## 字形占位口径（关键，勿单改一侧）
 
 统一为 **字形外接盒 = 可见区域的 64%**：
 
@@ -25,32 +37,33 @@
 - **Android 自适应**（108dp 画布 / 72dp 可见区 / 66dp 安全区）：字形 = **46.08dp**（可见区 64%）
   - 换算：`p_108 = 54 + 0.0681657 × (p_1024 − 512/510)`
   - 已实测落在 66dp 安全区内（对角半径 32.11dp < 33dp），圆 / 方圆 / 方形遮罩均不裁切
+- **微信圆形裁切**：字形对角半径 = 0.446 × 边长 < 0.5 × 边长（内切圆半径），裁圆后字形完整
 
-> ⚠️ **不要单独改其中一条链路。** 合成源与 `app/src/main/res/drawable/ic_launcher_foreground.xml`
-> 必须同时按上式重算，否则又会退回 v1 那种「Android 上饱满、iOS 上缩小」的双轨不一致。
+> ℹ️ 因为是 64% 的同一口径，**微信裁圆后字形占圆直径的比例同样是 64%**，与 Android 自适应图标观感一致。
 
 ## 文件与产物
 
 | 文件 | 作用 |
 |---|---|
-| `yinji-icon-6-fingerprint.svg` | 合成图标源（1024 画布，含底色圆角方）——**唯一真源** |
-| `yinji-icon-6-composite.svg` | 与上者内容一致；`render_icons_node.js` 的渲染入口 |
-| `render_icons_node.js` | 一次渲染、**双写**：`export/**`（跨平台归档）+ `app/src/main/res/mipmap-**`（工程实际引用） |
+| `yinji-icon-6-fingerprint.svg` | 圆角合成图标源——**唯一真源**（字形几何以此为准） |
+| `yinji-icon-6-composite.svg` | 与上者内容一致；`render_icons_node.js` 的圆角渲染入口 |
+| `render_icons_node.js` | 一次渲染、**双写**：`export/**` + `app/src/main/res/mipmap-**`；并对满出血产物**自动去掉 alpha 通道** |
 | `yinji-icon-1..5-*.svg` | 早期备选方案，仅留档，未接入 |
 | `preview.html` | 浏览器打开可横向对比 6 款方案 |
 | `export/` | Android / iOS / 商店 / 小程序全套位图 |
 
 ### 生成的位图（`node render_icons_node.js`）
 
-| 平台 | 尺寸 |
-|---|---|
-| Android mipmap | mdpi 48 · hdpi 72 · xhdpi 96 · xxhdpi 144 · xxxhdpi 192（`ic_launcher` + `ic_launcher_round`） |
-| 应用商店 | 512 · 1024 |
-| 小程序 | 144 · 512 |
-| iOS | 60@2x 120 · 60@3x 180 · 1024 |
+| 平台 | 尺寸 | 源 | alpha |
+|---|---|---|---|
+| Android mipmap | mdpi 48 · hdpi 72 · xhdpi 96 · xxhdpi 144 · xxxhdpi 192（`ic_launcher` + `ic_launcher_round`） | 圆角 | 保留 |
+| 应用商店 | 512 · 1024 | 满出血 | **去除** |
+| 小程序 | 144 · 512 | 满出血 | **去除** |
+| iOS | 60@2x 120 · 60@3x 180 · 1024 | 满出血 | **去除** |
 
-## Android 侧接入状态
+## 各端接入说明
 
+### Android
 - `mipmap-anydpi/ic_launcher.xml` + `ic_launcher_round.xml`：**自适应图标（已接入）**
   - `<background>` → `drawable/ic_launcher_background.xml`（108dp 全出血纯 `#07C160`，不加圆角）
   - `<foreground>` → `drawable/ic_launcher_foreground.xml`（108dp 视口，字形 46.08dp）
@@ -60,13 +73,21 @@
 > 注：`ic_launcher_round.png` 目前渲染的是圆角方形（沿用历史行为）。现代 Android 由系统遮罩负责圆形裁切，
 > 只有旧版圆角启动器才会用到这张图；若要严格圆形可另出一版。
 
+### 微信小程序
+- 上传**哪个文件**：`export/miniprogram/icon_144.png`
+- 上传到**哪里**：微信公众平台 → 设置 → 基本设置 → 小程序头像
+- 规格核对：144×144 ✓ / PNG ✓ / < 2MB ✓ / 四边直角 ✓ / 无 alpha ✓
+- 图片每月只能改 5 次，上传前先核对
+
+### iOS（预留）
+- 直接用 `export/ios/icon-1024.png`（已去 alpha）。圆角由系统超椭圆处理，**不要**用圆角版。
+
 ## 落地建议
 
-- **改字形**：只改 `yinji-icon-6-fingerprint.svg` → 跑 `render_icons_node.js` →
-  按 §字形占位口径 重算 `ic_launcher_foreground.xml`（生成脚本见工作区 `印迹图标改版/src/build_android_assets.cjs`）。
-- **iOS**：直接用合成 PNG，1024px 的圆角由系统处理，源文件保留 224 直角圆角即可。
-- **小程序**：微信对图标有圆角与尺寸要求，按平台导出对应 PNG。
-- **验证闭环**：重出位图 → `./gradlew :app:installDebug` → 桌面 + 设置「应用信息」+ 最近任务三处确认 →
-  圆形与方圆遮罩各看一次。
+- **改字形**：只改 `yinji-icon-6-fingerprint.svg` → 按 §字形占位口径 重算 `yinji-icon-6-square.svg` 与
+  `ic_launcher_foreground.xml`（生成脚本见工作区 `印迹图标改版/src/build_android_assets.cjs`）
+  → 跑 `render_icons_node.js` 重出全部位图。
+- **验证闭环**：重出位图 → 检查满出血产物四角不透明且 `colorType=2` → `./gradlew :app:installDebug`
+  → 桌面 + 设置「应用信息」+ 最近任务三处确认 → 圆形与方圆遮罩各看一次。
 
 > 设计来源：与 `yinji-figma-design-system.md` 的 Color Token 一致（brand `#07C160`、brand.soft `#E6F9EF`）。
