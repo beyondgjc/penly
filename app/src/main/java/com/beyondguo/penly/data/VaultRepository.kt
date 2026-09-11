@@ -630,6 +630,7 @@ class VaultRepository(private val store: VaultStore) {
             totp = dec(item.totpEnc, item.totpIv),
             totpDigits = item.totpDigits,
             totpPeriod = item.totpPeriod,
+            totpAlgo = item.totpAlgo,
             createdAt = item.createdAt,
             updatedAt = item.updatedAt,
         )
@@ -654,6 +655,7 @@ class VaultRepository(private val store: VaultStore) {
         totpSecret: String = "",
         totpDigits: Int = 0,
         totpPeriod: Int = 0,
+        totpAlgo: String = "",
     ): String {
         val key = SessionManager.requireKey()
         val slot = SessionManager.requireSlot()
@@ -677,6 +679,7 @@ class VaultRepository(private val store: VaultStore) {
             noteEnc = nE, noteIv = nI,
             totpEnc = tE, totpIv = tI,
             totpDigits = totpDigits, totpPeriod = totpPeriod,
+            totpAlgo = totpAlgo,
             createdAt = old?.createdAt ?: now,
             updatedAt = now,
         )

@@ -81,6 +81,7 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
     // 否则扫码录入的 digits=8 条目改个备注就会被 parseInput 的默认 6/30 静默覆盖（P1）
     var totpDigits by rememberSaveable { mutableStateOf(0) }
     var totpPeriod by rememberSaveable { mutableStateOf(0) }
+    var totpAlgo by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var prefilled by rememberSaveable { mutableStateOf(false) }
@@ -105,6 +106,7 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
                     totp = e.totp
                     totpDigits = e.totpDigits
                     totpPeriod = e.totpPeriod
+                    totpAlgo = e.totpAlgo
                     prefilled = true
                 } catch (_: Exception) {
                 }
@@ -120,9 +122,12 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
         // 2FA 密钥规范化：支持 base32 串或 otpauth:// 链接（含 digits/period 参数）；非法则拦截保存。
         // 参数保留语义见 Totp.resolveEditParams —— 裸 base32 输入沿用条目已存参数，链接参数优先
         val totpParams = if (totp.isBlank()) null else try {
-            Totp.resolveEditParams(totp, totpDigits, totpPeriod)
+            Totp.resolveEditParams(totp, totpDigits, totpPeriod, totpAlgo)
         } catch (e: Exception) {
-            error = "2FA 密钥格式不正确（应为 base32 串或 otpauth 链接）"
+            error = when {
+                e.message?.startsWith("不支持的算法") == true -> e.message ?: "2FA 密钥格式不正确"
+                else -> "2FA 密钥格式不正确（应为 base32 串或 otpauth 链接）"
+            }
             return
         }
         busy = true
@@ -138,6 +143,7 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
                     totpSecret = totpParams?.secret ?: "",
                     totpDigits = totpParams?.digits ?: 0,
                     totpPeriod = totpParams?.period ?: 0,
+                    totpAlgo = totpParams?.algo ?: "",
                 )
                 android.widget.Toast.makeText(context, "已保存", android.widget.Toast.LENGTH_SHORT).show()
                 onDone(false)

@@ -174,7 +174,7 @@ fun DetailScreen(
                     // 2FA 验证码卡（v3.0 项目④）：条目有 TOTP 密钥才渲染
                     if (e.totp.isNotBlank()) {
                         HorizontalLine()
-                        TotpCodeCard(secretInput = e.totp, digits = e.totpDigits, period = e.totpPeriod)
+                        TotpCodeCard(secretInput = e.totp, digits = e.totpDigits, period = e.totpPeriod, algo = e.totpAlgo)
                     }
 
                     if (e.note.isNotEmpty()) {
@@ -247,7 +247,7 @@ private fun HorizontalLine() {
  * 密钥非法（解码失败）时整卡不渲染，避免展示坏数据。
  */
 @Composable
-private fun TotpCodeCard(secretInput: String, digits: Int, period: Int) {
+private fun TotpCodeCard(secretInput: String, digits: Int, period: Int, algo: String) {
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -257,15 +257,16 @@ private fun TotpCodeCard(secretInput: String, digits: Int, period: Int) {
     }
     val context = LocalContext.current
     val timeSec = nowMs / 1000
-    // digits/period 来自条目存储（otpauth 参数），0 = 回落默认 6 位 / 30 秒；
+    // digits/period/algo 来自条目存储（otpauth 参数），空/0 = 回落默认（6 位 / 30 秒 / SHA1）；
     // 此处 secretInput 已是规范化 base32，不能再用 parseInput —— 那会把链接参数丢掉重置为默认值
     val effDigits = digits.takeIf { it in 1..9 } ?: Totp.DEFAULT_DIGITS
     val effPeriod = period.takeIf { it in 1..3600 } ?: Totp.DEFAULT_PERIOD
+    val effAlgo = algo.takeIf { it in Totp.ALGORITHMS } ?: Totp.DEFAULT_ALGO
     val secretBytes = remember(secretInput) {
         runCatching { Totp.base32Decode(secretInput) }.getOrNull()
     }
     val code = secretBytes?.let {
-        runCatching { Totp.generate(it, timeSec, effDigits, effPeriod) }.getOrNull()
+        runCatching { Totp.generate(it, timeSec, effDigits, effPeriod, effAlgo) }.getOrNull()
     }
     if (code == null) return
     val remaining = (effPeriod - timeSec % effPeriod).toInt()

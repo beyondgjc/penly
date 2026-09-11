@@ -102,6 +102,57 @@ class TotpTest {
         org.junit.Assert.assertNotEquals(Totp.generate(s, 89, 6, 30), Totp.generate(s, 119, 6, 30))
     }
 
+    /**
+     * SHA256/SHA512 算法锚点（N1 修复回归）：期望值以 Python hmac/hashlib 标准库
+     * 现场生成为权威源（counter=t//30；首次诊断曾把 t 误作 counter，弃其输出）。
+     * 种子沿用 20 字节 ASCII 串。
+     */
+    @Test
+    fun sha256_sha512_vectors() {
+        val cases = listOf(
+            59L to listOf("247374", "342147"),
+            1_111_111_109L to listOf("756375", "049338"),
+            1_111_111_111L to listOf("584430", "380122"),
+        )
+        for ((t, expected) in cases) {
+            assertEquals("t=$t SHA256", expected[0], Totp.generate(rfcSecret, t, digits = 6, algo = "SHA256"))
+            assertEquals("t=$t SHA512", expected[1], Totp.generate(rfcSecret, t, digits = 6, algo = "SHA512"))
+        }
+        // 8 位形态锚点（与首次真机观测一致）
+        assertEquals("32247374", Totp.generate(rfcSecret, 59, digits = 8, algo = "SHA256"))
+    }
+
+    /** otpauth 链接的 algorithm 参数提取 + 未知算法必须抛错（拒绝优于静默算错，N1） */
+    @Test
+    fun otpauth_algorithm_param() {
+        val p = Totp.parseInput(
+            "otpauth://totp/Azure:user?secret=JBSWY3DPEHPK3PXP&issuer=Azure&algorithm=SHA256",
+        )
+        assertEquals("SHA256", p.algo)
+        assertEquals("SHA-1 容错写法", "SHA1", Totp.parseInput("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&algorithm=SHA-1").algo)
+        assertThrows(IllegalArgumentException::class.java) {
+            Totp.parseInput("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&algorithm=MD5")
+        }
+        // generate 层同样拒绝
+        assertThrows(IllegalArgumentException::class.java) {
+            Totp.generate(rfcSecret, 59, algo = "MD5")
+        }
+    }
+
+    /** 编辑回存：algo 与 digits/period 同语义——裸 base32 保留存量，链接优先 */
+    @Test
+    fun resolveEditParams_algo_preserved_and_uri_wins() {
+        // 裸 base32 + 条目已存 SHA256 → 保留
+        assertEquals("SHA256", Totp.resolveEditParams("JBSWY3DPEHPK3PXP", 6, 30, "SHA256").algo)
+        // 裸 base32 + 条目无 algo → 默认 SHA1
+        assertEquals("SHA1", Totp.resolveEditParams("JBSWY3DPEHPK3PXP", 6, 30, "").algo)
+        // 链接带 algorithm=SHA256 → 链接优先
+        assertEquals(
+            "SHA256",
+            Totp.resolveEditParams("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&algorithm=SHA256", 6, 30, "SHA1").algo,
+        )
+    }
+
     /** 编辑回存语义（P1 回归锚）：裸 base32 输入保留条目已存参数，绝不能回落默认 6/30 */
     @Test
     fun resolveEditParams_bare_base32_preserves_stored_params() {

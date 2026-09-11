@@ -27,12 +27,17 @@ object Totp {
 
     const val DEFAULT_DIGITS = 6
     const val DEFAULT_PERIOD = 30
+    const val DEFAULT_ALGO = "SHA1"
+
+    /** otpauth 支持的哈希算法（RFC 6238）；缺省 SHA1 覆盖绝大多数站点 */
+    val ALGORITHMS = setOf("SHA1", "SHA256", "SHA512")
 
     /**
      * 解析结果：规范化 base32 密钥 + 网站指定的展示/刷新参数 + 建档用显示名。
      * @param secret 规范化 base32 密钥串
      * @param digits 验证码位数（6 = 缺省）
      * @param period 刷新间隔秒（30 = 缺省）
+     * @param algo 哈希算法（SHA1/SHA256/SHA512，SHA1 = 缺省；otpauth 链接未带时回落缺省）
      * @param label otpauth 路径里的显示名（惯例"站点:账号"，URL 解码后）；手输为 null
      * @param issuer otpauth issuer 参数（网站名，URL 解码后）；手输为 null
      */
@@ -40,6 +45,7 @@ object Totp {
         val secret: String,
         val digits: Int,
         val period: Int,
+        val algo: String = DEFAULT_ALGO,
         val label: String? = null,
         val issuer: String? = null,
     ) {
@@ -88,17 +94,19 @@ object Totp {
         timeSeconds: Long,
         digits: Int = DEFAULT_DIGITS,
         period: Int = DEFAULT_PERIOD,
+        algo: String = DEFAULT_ALGO,
     ): String {
         require(secret.isNotEmpty()) { "密钥为空" }
         require(digits in 1..9) { "位数不支持：$digits" }
         require(period in 1..3600) { "刷新间隔不支持：$period" }
+        require(algo in ALGORITHMS) { "不支持的算法：$algo" }
         val counter = timeSeconds / period
         // 计数器转 8 字节大端（RFC 6238 §4.1）
         val msg = ByteArray(8).apply {
             for (i in 7 downTo 0) this[i] = (counter shr (8 * (7 - i))).toByte()
         }
-        val mac = Mac.getInstance("HmacSHA1")
-        mac.init(SecretKeySpec(secret, "HmacSHA1"))
+        val mac = Mac.getInstance("Hmac$algo")
+        mac.init(SecretKeySpec(secret, "Hmac$algo"))
         val hash = mac.doFinal(msg)
         // 动态截断（RFC 4226 §5.3）：末字节低 4 位为偏移，取 4 字节并屏蔽符号位
         val offset = hash.last().toInt() and 0x0F
@@ -117,13 +125,15 @@ object Totp {
         timeSeconds: Long = System.currentTimeMillis() / 1000,
         digits: Int = DEFAULT_DIGITS,
         period: Int = DEFAULT_PERIOD,
-    ): String = generate(base32Decode(secretBase32), timeSeconds, digits, period)
+        algo: String = DEFAULT_ALGO,
+    ): String = generate(base32Decode(secretBase32), timeSeconds, digits, period, algo)
 
     /**
      * 规范化用户粘贴的 2FA 密钥，支持两种形态：
-     * 1) 光秃秃的 base32 串：去空格/连字符、统一大写，参数用默认 6/30
-     * 2) `otpauth://totp/...?secret=XXX&digits=8&period=60` 完整链接：
-     *    提取 secret 并读取 digits/period（缺省回落 6/30）
+     * 1) 光秃秃的 base32 串：去空格/连字符、统一大写，参数用默认 6/30/SHA1
+     * 2) `otpauth://totp/...?secret=XXX&digits=8&period=60&algorithm=SHA256` 完整链接：
+     *    提取 secret 并读取 digits/period/algorithm（缺省回落 6/30/SHA1）；
+     *    **algorithm 参数出现但不认识时抛错**——静默忽略会生成"看似能用但永远错"的码（N1 教训）
      * 非法输入抛 IllegalArgumentException（由 UI 层转为错误提示）。
      */
     fun parseInput(raw: String): Params {
@@ -132,7 +142,7 @@ object Totp {
         if (!s.startsWith("otpauth://", ignoreCase = true)) {
             return Params(normalizeBase32(s), DEFAULT_DIGITS, DEFAULT_PERIOD)
         }
-        // otpauth://totp/Label?secret=..&issuer=..&digits=..&period=..
+        // otpauth://totp/Label?secret=..&issuer=..&digits=..&period=..&algorithm=..
         val body = s.substringAfter("://")
         val path = body.substringAfter('/', "").substringBefore('?')
         val query = s.substringAfter('?', "")
@@ -146,12 +156,20 @@ object Totp {
         require(secret.isNotEmpty()) { "链接中未找到 secret 参数" }
         val digits = params["digits"]?.toIntOrNull()?.takeIf { it in 1..9 } ?: DEFAULT_DIGITS
         val period = params["period"]?.toIntOrNull()?.takeIf { it in 1..3600 } ?: DEFAULT_PERIOD
+        val algo = params["algorithm"]?.let { normalizeAlgo(it) } ?: DEFAULT_ALGO
         // 显示名/网站名 URL 解码（容错：解码失败保留原值）
         val label = runCatching { java.net.URLDecoder.decode(path, "UTF-8") }.getOrNull()?.takeIf { it.isNotBlank() }
         val issuer = params["issuer"]?.let {
             runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrNull()
         }?.takeIf { it.isNotBlank() }
-        return Params(normalizeBase32(secret), digits, period, label, issuer)
+        return Params(normalizeBase32(secret), digits, period, algo, label, issuer)
+    }
+
+    /** 算法参数规范化：兼容 SHA1/SHA-1 等写法；未知算法抛错（拒绝优于静默算错） */
+    private fun normalizeAlgo(v: String): String {
+        val canonical = v.trim().uppercase().replace("-", "")
+        require(canonical in ALGORITHMS) { "不支持的算法：$v" }
+        return canonical
     }
 
     /**
@@ -163,12 +181,13 @@ object Totp {
      * @param storedDigits 条目当前存储的位数（0 = 无/默认）
      * @param storedPeriod 条目当前存储的间隔（0 = 无/默认）
      */
-    fun resolveEditParams(raw: String, storedDigits: Int, storedPeriod: Int): Params {
+    fun resolveEditParams(raw: String, storedDigits: Int, storedPeriod: Int, storedAlgo: String = DEFAULT_ALGO): Params {
         val p = parseInput(raw)
         val fromUri = raw.trim().startsWith("otpauth://", ignoreCase = true)
         return if (fromUri) p else p.copy(
             digits = storedDigits.takeIf { it in 1..9 } ?: DEFAULT_DIGITS,
             period = storedPeriod.takeIf { it in 1..3600 } ?: DEFAULT_PERIOD,
+            algo = storedAlgo.takeIf { it in ALGORITHMS } ?: DEFAULT_ALGO,
         )
     }
 

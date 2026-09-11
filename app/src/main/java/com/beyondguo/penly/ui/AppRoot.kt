@@ -121,6 +121,7 @@ private fun ReadyRoot(repo: VaultRepository, onVaultChanged: () -> Unit) {
                     totpSecret = p.secret,
                     totpDigits = p.digits,
                     totpPeriod = p.period,
+                    totpAlgo = p.algo,
                 )
                 android.widget.Toast.makeText(context, "已扫码添加：$title", android.widget.Toast.LENGTH_SHORT).show()
                 navController.navigate("detail/$id")

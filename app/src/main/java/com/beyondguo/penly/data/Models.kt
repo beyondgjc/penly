@@ -95,6 +95,8 @@ data class VaultItem(
      */
     @SerialName("totpDigits") val totpDigits: Int = 0,
     @SerialName("totpPeriod") val totpPeriod: Int = 0,
+    /** TOTP 哈希算法（SHA1/SHA256/SHA512；空串 = 缺省 SHA1），非敏感明文存储 */
+    @SerialName("totpAlgo") val totpAlgo: String = "",
     @SerialName("createdAt") val createdAt: Long = 0,
     @SerialName("updatedAt") val updatedAt: Long = 0,
 )
@@ -112,6 +114,8 @@ data class PlainEntry(
     /** TOTP 参数（0 = 用默认 6 位 / 30 秒） */
     val totpDigits: Int = 0,
     val totpPeriod: Int = 0,
+    /** TOTP 哈希算法（空串 = 缺省 SHA1） */
+    val totpAlgo: String = "",
     val createdAt: Long,
     val updatedAt: Long,
 )
