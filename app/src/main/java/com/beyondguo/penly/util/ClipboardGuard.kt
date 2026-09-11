@@ -42,6 +42,7 @@ object ClipboardGuard {
         val task = Runnable { clearNow(appContext, "定时清除") }
         pending = task
         handler.postDelayed(task, DELAY_MS)
+        Log.d(TAG, "已排定清除任务：${DELAY_MS}ms 后执行")
     }
 
     /** 撤销未执行的清除任务（开关关闭时调用） */

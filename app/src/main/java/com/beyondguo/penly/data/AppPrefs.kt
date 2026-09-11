@@ -34,6 +34,7 @@ object AppPrefs {
         scope.launch {
             appContext.appPrefsDataStore.data.collect { prefs ->
                 clipboardAutoClear = prefs[KEY_CLIPBOARD_AUTO_CLEAR] ?: true
+                android.util.Log.d("PenlyClipboard", "AppPrefs 缓存更新: clipboardAutoClear=$clipboardAutoClear")
             }
         }
     }

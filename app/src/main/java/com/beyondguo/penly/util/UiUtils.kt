@@ -23,6 +23,7 @@ fun copySensitive(context: Context, label: String, text: String) {
     // 清除调度收口 ClipboardGuard（v3.0 项目②三层保障：定时清 / 空 clip 兜底 / 回前台补偿）。
     // 旧实现在延时任务里先读剪贴板比对再清 —— Android 10+ 后台读恒 null，
     // 比对失败导致 clearPrimaryClip 永远不执行，且无 runCatching（MIUI 后台 clear 抛异常即崩）。
+    android.util.Log.d("PenlyClipboard", "copySensitive: flag=${AppPrefs.clipboardAutoClear}, label=$label")
     if (AppPrefs.clipboardAutoClear) {
         ClipboardGuard.scheduleClear(context)
     } else {
