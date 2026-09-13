@@ -28,3 +28,25 @@
 # ---- 无需 keep 的依赖（记录判断依据，防后人误加/误删）----
 # pinyin4j：纯查表实现，无反射/JNI
 # DataStore preferences / Compose / fragment / biometric / coroutines：均自带 consumer rules
+
+# ---- release 剥离 android.util.Log ----
+# 为什么：logcat 对本应用是侧信道。VaultRepository 重建检索索引时会把"当前是 A 槽位
+# 还是 B 槽位"打进 logcat（检索索引已重建：slot=A/B），任何有 adb 读日志权限的第三方
+# 都能推断出保险库的写入活动。密码管理器不该在 release 里留下这类痕迹。
+#
+# 为什么用 -assumenosideeffects 而不是改源码：源码里的日志要保留，调试时还得用。
+# 该规则只在 R8「优化」开启时才生效 —— release 用的是 proguard-android-optimize.txt，
+# debug 未开 minify，所以 debug 包日志照常打印，调试不受任何影响。
+#
+# 安全性：全量 15 个 Log.d/Log.w 调用点均已核对，没有任何一处使用 Log 的返回值
+# （Log.* 返回 int，此处全部作为语句丢弃），剥离不改变任何业务逻辑。
+# 注意：这只移除调用点，字符串常量会随调用点一起被判定为不可达而消失；
+# 若将来出现 `val x = Log.d(...)` 这类取值写法，本规则会导致 x 变成未定义值，需重新评估。
+-assumenosideeffects class android.util.Log {
+    public static *** v(...);
+    public static *** d(...);
+    public static *** i(...);
+    public static *** w(...);
+    public static *** e(...);
+    public static *** wtf(...);
+}
