@@ -91,6 +91,16 @@ object AutofillResponseBuilder {
             "buildFillResponse: items=${all.size} matched=${matched.size} added=$added " +
                 "user=${form.usernameId != null} pwd=${form.passwordId != null} pkg=${form.packageName}",
         )
+        if (added == 0) {
+            // 无匹配条目：放一个空值占位数据集锚定保存跟踪。
+            // 纯 SaveInfo 无数据集的响应在部分框架实现上不会触发保存 UI（N3 后续）；
+            // 占位数据集让框架把本表单锚定到印迹，用户手输提交后即可触发保存。
+            val views = presentation(context, "印迹", "手动输入后提交即可保存到印迹")
+            val dataset = Dataset.Builder()
+            form.usernameId?.let { dataset.setValue(it, AutofillValue.forText(""), views) }
+            form.passwordId?.let { dataset.setValue(it, AutofillValue.forText(""), views) }
+            builder.addDataset(dataset.build())
+        }
         return builder
             .setSaveInfo(buildSaveInfo(form))
             .build()
