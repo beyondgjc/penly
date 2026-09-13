@@ -50,7 +50,12 @@ object AutofillResponseBuilder {
 
     /**
      * 构建"已解锁"填充响应：匹配条目（来源包名优先，无来源则全量）逐条出数据集。
-     * 返回 null = 无可建议内容（服务应回复 onSuccess(null) 不参与）。
+     *
+     * **关键语义：即使没有可填充的数据集，也必须返回带 SaveInfo 的响应**——
+     * 系统只把「保存」请求发给认领过表单的服务（用户点过印迹卡片的表单）。
+     * 若此处返回 null，表单未认领，用户手输的账密在提交时永远不会触发保存提示
+     * （N3 教训：GitHub 第一页只有账号框、条目账号为空 → 数据集为空 → null → 保存失效）。
+     * 返回 null 仅限：结构里根本没有账号/密码字段（非登录表单，由服务层判定）。
      */
     suspend fun buildFillResponse(
         repo: VaultRepository,
@@ -58,7 +63,6 @@ object AutofillResponseBuilder {
         form: ParsedForm,
     ): FillResponse? {
         val all = repo.items()
-        if (all.isEmpty()) return null
         // 来源匹配：保存时记录过包名的条目优先；没有匹配来源时退全量（首批用户无来源记录）
         val matched = all.filter { it.appPackage == form.packageName }
         val candidates = matched.ifEmpty { all }
@@ -67,10 +71,10 @@ object AutofillResponseBuilder {
         var added = 0
         for (item in candidates) {
             val entry = runCatching { repo.decryptItem(item) }.getOrNull() ?: continue
-            if (entry.account.isBlank() && entry.secret.isBlank()) continue
-            if ((form.usernameId == null || entry.account.isBlank()) &&
-                (form.passwordId == null || entry.secret.isBlank())
-            ) continue
+            // 数据集级过滤：该条目至少能填一个"当前表单存在"的字段
+            val contributes = (form.usernameId != null && entry.account.isNotBlank()) ||
+                (form.passwordId != null && entry.secret.isNotBlank())
+            if (!contributes) continue
             val views = presentation(context, item.title.ifBlank { "印迹" }, entry.account.ifBlank { item.title })
             val dataset = Dataset.Builder()
             form.usernameId?.let {
@@ -82,7 +86,11 @@ object AutofillResponseBuilder {
             builder.addDataset(dataset.build())
             added++
         }
-        if (added == 0) return null
+        android.util.Log.d(
+            "PenlyAutofill",
+            "buildFillResponse: items=${all.size} matched=${matched.size} added=$added " +
+                "user=${form.usernameId != null} pwd=${form.passwordId != null} pkg=${form.packageName}",
+        )
         return builder
             .setSaveInfo(buildSaveInfo(form))
             .build()

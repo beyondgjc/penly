@@ -64,6 +64,8 @@ class AutofillAuthActivity : FragmentActivity() {
 
                 fun respondFill() {
                     scope.launch {
+                        // buildFillResponse 现在恒返回带 SaveInfo 的响应（无数据集也认领表单，
+                        // 保证之后手输的账密能触发保存提示）
                         val response = AutofillResponseBuilder.buildFillResponseForClientState(
                             repo, applicationContext, clientState ?: Bundle(),
                         )
@@ -71,6 +73,7 @@ class AutofillAuthActivity : FragmentActivity() {
                             error = "金库中没有可填充的条目"
                             return@launch
                         }
+                        android.util.Log.d("PenlyAutofill", "auth unlock: responding with fill response")
                         setResult(
                             RESULT_OK,
                             Intent().putExtra(AutofillManager.EXTRA_AUTHENTICATION_RESULT, response),
