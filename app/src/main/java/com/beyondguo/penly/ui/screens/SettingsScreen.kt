@@ -263,22 +263,32 @@ fun SettingsScreen(
                         )
                     },
                 )
-                // 系统自动填充（v3.0 项目⑤）：入口中性，未启用时一键跳系统授权页
+                // 系统自动填充（v3.0 项目⑤）：开关形态。
+                // 开 = 跳系统授权页（系统安全要求：绑定必须人工在系统弹窗确认，App 无法静默自绑）
+                // 关 = disableAutofillServices() 立即解绑（系统 API，无需二次确认）
                 SettingRow(
                     title = "系统自动填充",
                     subtitle = if (autofillEnabled) "已启用：登录页自动填充账号密码"
-                    else "未启用：点按前往系统设置开启",
-                    onClick = if (autofillEnabled) null else {
-                        {
-                            runCatching {
-                                context.startActivity(
-                                    android.content.Intent(
-                                        android.provider.Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE,
-                                        android.net.Uri.parse("package:${context.packageName}"),
-                                    ),
-                                )
-                            }.onFailure { showToast("请到 系统设置 → 密码与账户 → 自动填充服务 手动选择印迹") }
-                        }
+                    else "未启用：打开后需在系统弹窗中确认",
+                    trailing = {
+                        Switch(
+                            checked = autofillEnabled,
+                            onCheckedChange = { want ->
+                                if (want) {
+                                    runCatching {
+                                        context.startActivity(
+                                            android.content.Intent(
+                                                android.provider.Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE,
+                                                android.net.Uri.parse("package:${context.packageName}"),
+                                            ),
+                                        )
+                                    }.onFailure { showToast("请到 系统设置 → 密码与账户 → 自动填充服务 手动选择印迹") }
+                                } else {
+                                    autofillManager?.disableAutofillServices()
+                                    autofillEnabled = false
+                                }
+                            },
+                        )
                     },
                 )
                 // 入口刻意中性、无状态标记、无强调样式：
