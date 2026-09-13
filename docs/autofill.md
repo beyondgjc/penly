@@ -43,9 +43,21 @@ Activity **finish**（`AutofillManager: onActivityFinishing(): calling commitLoc
 匹配。明文暴露面仅标题 + 条目 id（设计内明文字段）；账号/密码/TOTP 均密文不可见；
 影子诱饵条目 `appPackage` 为空串永不匹配；手动创建条目不参与匹配。
 
-### 2.4 onSaveRequest 锁定路径
-金库锁定时无法加密入库 → `onFailure("金库已锁定：请打开印迹解锁后重新提交…")`。
-V1 不做"锁内解锁保存"浮层；若用户反馈差再立项。
+### 2.4 onSaveRequest 锁定路径（N8，2026-09-13）
+金库锁定时无主密钥、无法加密入库 → 发 heads-up 通知「保存到印迹」→
+用户点通知拉起解锁浮层（AutofillAuthActivity SAVE 模式）→ 验证指纹/主密码 →
+表单账密直接入库（Toast 反馈），无需重新提交表单。
+表单值经浮层 Intent 内存传递（系统 assist 结构中本为明文），用后即弃不落盘；
+通知文案只含来源包名。解锁态保存不再二次验证 = 会话信任（1Password/Bitwarden 同款）。
+
+**为什么不直接弹浮层（MIUI 实测，勿回退）**：保存场景下被填充 activity 已 finish，
+① 官方 `onSuccess(intentSender)` ② 服务进程 startActivity 两条路都被 MIUI 静默拦截
+（ActivityTaskManager 有 START 记录但 activity 永不创建窗口；填充路径能弹是因
+点卡片时 client activity 还活着）。点通知是全新用户交互，任何 ROM 放行。
+
+**MIUI 通知分类坑**：channel 悬浮通知默认关 + 通知过滤规则"系统推荐"会把通知
+折叠进「不重要通知」不弹横幅 → 引导用户：设置→通知管理→印迹→过滤规则改
+「全部设为重要」+ 通知类别「保存待验证」开悬浮通知。
 
 ## 3. 平台兼容性边界（预期管理）
 
@@ -122,6 +134,8 @@ node.autofillValue?.takeIf { it.isText }?.textValue?.toString()
 | N5 | 浮层静默完成无反馈 | 默认模式+空库 <300ms 自动完成 | Toast 反馈（14017f0） |
 | N6 | 先弹卡再解锁查匹配，顺序颠倒 | 用户产品纠偏 | 免解锁匹配前置（ae5aac8） |
 | N6v2 | 未命中弹占位卡片被否 + 保存不弹 | 占位卡片违反静默要求；真因 compat | save-only 响应（f80320b）+ 探针归因（02f7e83） |
+| N7 | XML 表单聚焦即崩、保存不弹 | toggle 类型 AutofillValue 强取 textValue 抛异常 | isText 判型后取值（7c13baa） |
+| N8 | 锁定态保存"没验证也没存"（静默失败，体验断裂） | 无主密钥物理上存不了；且 targetSdk≥Q 下 onFailure 只写 logcat 用户不可见 | 通知→浮层验证后直接入库（MIUI 拦直弹，见 2.4） |
 
 **教训**：验证 autofill 行为必须用标准 View 表单做隔离测试——在 compat/Compose App
 上测，会把"App 侧不支持"误判成"平台限制"或"自己实现有 bug"。

@@ -41,17 +41,32 @@ import kotlinx.coroutines.launch
  *
  * 必须继承 FragmentActivity（BiometricPrompt 要求），解锁逻辑与 LockScreen 同源
  * （requiresPassword 判定 + unlockDefault/unlock + BioManager 缓存副本）。
- * V1 仅处理 FILL 模式；保存路径锁定时由服务 onFailure 提示用户先解锁。
+ *
+ * 两种模式：
+ * - FILL（默认）：解锁后构建 FillResponse 通过 setResult 回传系统 → 字段被填充。
+ * - SAVE（N8，锁定态保存）：onSaveRequest 时金库锁定 → 服务 onFailure(intentSender)
+ *   拉起本浮层并经 Intent 暂存表单值（内存传递、用后即弃、不落盘不打日志），
+ *   验证解锁后直接把表单账密入库，无需用户重新提交表单。
  */
 class AutofillAuthActivity : FragmentActivity() {
 
     companion object {
         const val EXTRA_CLIENT_STATE = "clientState"
+        const val EXTRA_MODE = "mode"
+        const val MODE_FILL = "fill"
+        const val MODE_SAVE = "save"
+        const val EXTRA_SAVE_TITLE = "saveTitle"
+        const val EXTRA_SAVE_ACCOUNT = "saveAccount"
+        const val EXTRA_SAVE_SECRET = "saveSecret"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val clientState = intent?.getBundleExtra(EXTRA_CLIENT_STATE)
+        val isSave = intent?.getStringExtra(EXTRA_MODE) == MODE_SAVE
+        val saveTitle = intent?.getStringExtra(EXTRA_SAVE_TITLE).orEmpty()
+        val saveAccount = intent?.getStringExtra(EXTRA_SAVE_ACCOUNT).orEmpty()
+        val saveSecret = intent?.getStringExtra(EXTRA_SAVE_SECRET).orEmpty()
         val repo = penly.repo
 
         setContent {
@@ -82,7 +97,7 @@ class AutofillAuthActivity : FragmentActivity() {
                     }
                 }
 
-                fun unlockAndRespond(m: String?) {
+                fun unlockAndProceed(m: String?) {
                     if (busy) return
                     busy = true
                     error = ""
@@ -95,32 +110,61 @@ class AutofillAuthActivity : FragmentActivity() {
                             error = "解锁失败，请重试"
                             return@launch
                         }
-                        // 可见反馈：默认模式下浮层 <300ms 即自动完成并关闭，没有这条提示
-                        // 用户会以为"点了没反应"（N5）。空金库时本次点按的价值=认领表单，
-                        // 手输账密提交后才会触发保存提示。
-                        android.widget.Toast.makeText(
-                            applicationContext,
-                            "印迹已解锁：输入账密并登录后，将提示保存到印迹",
-                            android.widget.Toast.LENGTH_LONG,
-                        ).show()
-                        respondFill()
+                        if (!isSave) {
+                            // 可见反馈：默认模式下浮层 <300ms 即自动完成并关闭，没有这条提示
+                            // 用户会以为"点了没反应"（N5）。空金库时本次点按的价值=认领表单，
+                            // 手输账密提交后才会触发保存提示。
+                            android.widget.Toast.makeText(
+                                applicationContext,
+                                "印迹已解锁：输入账密并登录后，将提示保存到印迹",
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                            respondFill()
+                        } else {
+                            // SAVE 模式：解锁后主密钥可用 → 表单账密直接入库（N8）。
+                            val saved = try {
+                                repo.saveEntry(
+                                    id = null,
+                                    title = saveTitle,
+                                    category = "",
+                                    account = saveAccount,
+                                    secret = saveSecret,
+                                    note = "",
+                                    appPackage = saveTitle,
+                                )
+                                true
+                            } catch (e: Exception) {
+                                android.util.Log.e("PenlyAutofill", "save from autofill overlay failed", e)
+                                false
+                            }
+                            android.widget.Toast.makeText(
+                                applicationContext,
+                                if (saved) "已保存到印迹" else "保存失败，请打开印迹重试",
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                            finish()
+                        }
                     }
                 }
 
                 LaunchedEffect(Unit) {
                     requiresPwd = repo.requiresPassword()
                     // default 模式：等同主界面「轻触进入」，无需输入
-                    if (requiresPwd == false) unlockAndRespond(null)
+                    if (requiresPwd == false) unlockAndProceed(null)
                 }
 
                 Column(
                     Modifier.padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text("印迹 · 自动填充验证", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        if (isSave) "印迹 · 保存验证" else "印迹 · 自动填充验证",
+                        style = MaterialTheme.typography.titleLarge,
+                    )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "验证通过后才能使用金库数据填充登录表单",
+                        if (isSave) "验证通过后，表单中的账密将保存到印迹"
+                        else "验证通过后才能使用金库数据填充登录表单",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -137,7 +181,7 @@ class AutofillAuthActivity : FragmentActivity() {
                                         error = ""
                                         BioManager.unlockWithMaster(
                                             this@AutofillAuthActivity,
-                                            onMaster = { m -> unlockAndRespond(m) },
+                                            onMaster = { m -> unlockAndProceed(m) },
                                             onError = { e -> if (e != "已取消") error = e },
                                         )
                                     },
@@ -158,7 +202,7 @@ class AutofillAuthActivity : FragmentActivity() {
                                 )
                                 Spacer(Modifier.height(10.dp))
                                 Button(
-                                    onClick = { unlockAndRespond(pwd) },
+                                    onClick = { unlockAndProceed(pwd) },
                                     enabled = !busy && pwd.isNotEmpty(),
                                     modifier = Modifier.fillMaxWidth(),
                                 ) { Text(if (busy) "解锁中…" else "解锁并继续") }
