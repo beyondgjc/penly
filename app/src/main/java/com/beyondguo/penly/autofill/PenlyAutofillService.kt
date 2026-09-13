@@ -20,8 +20,9 @@ import kotlinx.coroutines.runBlocking
  *
  * onFillRequest：系统检测到登录表单 → 回复数据集。
  *  - 会话已解锁：直接解密金库出数据集（解锁路径）
- *  - 会话已锁定（15s 自动锁后的常态）：回复「认证数据集」，系统拉起
- *    [AutofillAuthActivity]，指纹/主密码验证后回传真正的 FillResponse
+ *  - 会话已锁定（15s 自动锁后的常态）：先免解锁匹配——命中回「认证数据集」，
+ *    系统拉起 [AutofillAuthActivity]，指纹/主密码验证后回传真正的 FillResponse；
+ *    未命中不弹填充提示，含密码字段的表单回「保存锚定占位」（提交后触发保存）
  *
  * onSaveRequest：用户在系统保存弹窗点「保存」→ 取表单提交值入库。
  *  - 会话已解锁：直接 saveEntry（记录来源包名）
@@ -48,12 +49,20 @@ class PenlyAutofillService : AutofillService() {
             runCatching { runBlocking { buildFillResponse(repo, applicationContext, form) } }.getOrNull()
         } else {
             // 锁定路径（N6 重构·匹配前置）：**先免解锁匹配，再决定是否提示**。
-            // 读双槽位明文匹配索引（appPackage/标题为设计内明文），命中才弹验证卡片；
-            // 未存过 → 静默不提示（用户预期：没存过就不打扰）。
+            // 读双槽位明文匹配索引（appPackage/标题为设计内明文），命中才弹验证卡片。
             val matches = runCatching { runBlocking { repo.autofillMatchIndex(form.packageName) } }
                 .getOrNull().orEmpty()
             if (matches.isEmpty()) {
-                callback.onSuccess(null) // 没存过该应用的凭据：不提示
+                // 未命中：不弹填充提示，但保存链路必须保留——系统只把保存请求发给
+                // 认领过表单的服务，含密码字段的登录表单回占位数据集锚定保存
+                // （提交后弹「保存到印迹」）；无密码字段的表单（搜索框等）静默不参与。
+                if (form.passwordId == null) {
+                    callback.onSuccess(null)
+                    return
+                }
+                callback.onSuccess(
+                    AutofillResponseBuilder.buildSaveAnchorResponse(applicationContext, form),
+                )
                 return
             }
             buildAuthDataset(form, matches)

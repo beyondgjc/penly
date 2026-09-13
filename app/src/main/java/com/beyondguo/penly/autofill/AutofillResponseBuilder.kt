@@ -122,6 +122,25 @@ object AutofillResponseBuilder {
         return buildFillResponse(repo, context, form, form.matchedIds)
     }
 
+    /**
+     * 锁定态未命中的「保存锚定」响应（N6 语义修正）。
+     *
+     * 没存过该应用的凭据 → **不弹填充提示**（没有可填充的数据集），但保存链路必须保留：
+     * 系统只把「保存」请求发给认领过表单的服务，因此仍需返回响应——
+     * 空值占位数据集 + SaveInfo，用户手输账密提交后系统即弹「保存到印迹」。
+     * 仅含密码字段的登录表单调用此函数；无密码字段的表单由服务侧静默不参与。
+     */
+    fun buildSaveAnchorResponse(context: Context, form: ParsedForm): FillResponse {
+        val views = presentation(context, "印迹", "登录后自动提示保存")
+        val dataset = Dataset.Builder()
+        form.usernameId?.let { dataset.setValue(it, AutofillValue.forText(""), views) }
+        form.passwordId?.let { dataset.setValue(it, AutofillValue.forText(""), views) }
+        return FillResponse.Builder()
+            .addDataset(dataset.build())
+            .setSaveInfo(buildSaveInfo(form))
+            .build()
+    }
+
     private fun buildSaveInfo(form: ParsedForm): SaveInfo {
         val hasPassword = form.passwordId != null
         val type =
