@@ -297,6 +297,32 @@ class VaultRepository(private val store: VaultStore) {
         return unlock(CryptoEngine.ANDROID_DEFAULT_MASTER)
     }
 
+    /** Autofill 匹配索引条目：仅含非敏感明文（标题），不含任何密文字段 */
+    data class AutofillMatch(val itemId: String, val title: String)
+
+    /**
+     * Autofill 锁定态匹配索引（v3.0 项目⑤）：**无需解锁**——直接读双槽位原始存储，
+     * 按 [packageName] 过滤条目的 appPackage（明文字段），返回命中条目的 id+标题。
+     *
+     * 设计要点：
+     * - 匹配发生在解锁之前，服务据此决定"弹验证卡片 / 静默"（用户预期：没存过就不提示）
+     * - 只暴露标题与条目 id——账号/密码/TOTP 均为密文，锁定态不可见
+     * - 影子槽位的诱饵条目 appPackage 为空串，永不匹配真实包名，无影子泄露路径
+     * - 手动创建的条目 appPackage 为空串 → 不参与包名匹配（V2 再做关键词/域名匹配）
+     */
+    suspend fun autofillMatchIndex(packageName: String): List<AutofillMatch> {
+        if (packageName.isBlank()) return emptyList()
+        val out = mutableListOf<AutofillMatch>()
+        for (slot in listOf(Slot.A, Slot.B)) {
+            for (item in store.readItems(slot)) {
+                if (item.appPackage == packageName) {
+                    out.add(AutofillMatch(item.id, item.title))
+                }
+            }
+        }
+        return out
+    }
+
     fun lock() {
         searchIndex.clear() // 锁定即销毁：向量从不落盘，清空内存即可，无残留风险
         SessionManager.lock()

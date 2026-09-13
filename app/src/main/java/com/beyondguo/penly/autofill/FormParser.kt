@@ -28,6 +28,8 @@ data class ParsedForm(
     val packageName: String,
     /** 网页域名（浏览器场景，V2 用于域名匹配） */
     val webDomain: String?,
+    /** 锁定态匹配索引命中的条目 id（仅解锁浮层路径有值） */
+    val matchedIds: List<String>? = null,
 )
 
 object FormParser {

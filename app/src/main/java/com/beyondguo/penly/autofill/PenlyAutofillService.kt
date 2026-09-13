@@ -47,28 +47,40 @@ class PenlyAutofillService : AutofillService() {
         val response: FillResponse? = if (repo.unlocked.value) {
             runCatching { runBlocking { buildFillResponse(repo, applicationContext, form) } }.getOrNull()
         } else {
-            // 认证数据集：value 留空 + setAuthentication —— 用户点卡片拉起解锁浮层
-            buildAuthDataset(form)
+            // 锁定路径（N6 重构·匹配前置）：**先免解锁匹配，再决定是否提示**。
+            // 读双槽位明文匹配索引（appPackage/标题为设计内明文），命中才弹验证卡片；
+            // 未存过 → 静默不提示（用户预期：没存过就不打扰）。
+            val matches = runCatching { runBlocking { repo.autofillMatchIndex(form.packageName) } }
+                .getOrNull().orEmpty()
+            if (matches.isEmpty()) {
+                callback.onSuccess(null) // 没存过该应用的凭据：不提示
+                return
+            }
+            buildAuthDataset(form, matches)
         }
         callback.onSuccess(response)
     }
 
-    /** 锁定路径：只回一个"需要认证"的数据集，真正的数据在浮层验证后由回传响应给出 */
-    private fun buildAuthDataset(form: ParsedForm): FillResponse {
+    /**
+     * 锁定路径：命中匹配索引时回「认证数据集」，卡片展示命中条目标题；
+     * 用户点按 → 解锁浮层验证 → 回传只含命中条目的 FillResponse（指纹后直接填充）。
+     */
+    private fun buildAuthDataset(form: ParsedForm, matches: List<com.beyondguo.penly.data.VaultRepository.AutofillMatch>): FillResponse {
         val intent = android.content.Intent(this, AutofillAuthActivity::class.java).apply {
-            putExtra(AutofillAuthActivity.EXTRA_CLIENT_STATE, AutofillResponseBuilder.clientState(form))
+            putExtra(AutofillAuthActivity.EXTRA_CLIENT_STATE, AutofillResponseBuilder.clientState(form, matches.map { it.itemId }))
             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         val sender = android.app.PendingIntent.getActivity(
             this, REQUEST_CODE_AUTH, intent,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
         ).intentSender
+        val title = if (matches.size == 1) matches[0].title else "印迹 · ${matches.size} 条匹配"
         val targetId = form.passwordId ?: form.usernameId!!
         val dataset = Dataset.Builder()
             .setValue(
                 targetId,
                 android.view.autofill.AutofillValue.forText(""),
-                AutofillResponseBuilder.presentation(this, "印迹 · 需要验证", "点按验证指纹后填充"),
+                AutofillResponseBuilder.presentation(this, title, "点按验证指纹后填充"),
             )
             .setAuthentication(sender)
             .build()
