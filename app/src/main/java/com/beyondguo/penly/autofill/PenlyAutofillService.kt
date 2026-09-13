@@ -128,27 +128,13 @@ class PenlyAutofillService : AutofillService() {
             if (ok) callback.onSuccess() else callback.onFailure("保存失败")
             return
         }
-        // 金库已锁：无主密钥无法加密入库。N8（锁定态保存）：发 heads-up 通知，
-        // 用户点按后拉起解锁浮层（AutofillAuthActivity SAVE 模式），验证后表单账密
-        // 直接入库。表单值经浮层 Intent 内存传递，用后即弃不落盘；通知文案不含密文。
-        //
-        // 启动通道演进（2026-09-13 实测）：
-        // ① 官方 onSuccess(intentSender)：MIUI 静默拦截——保存场景下被填充 activity
-        //    已 finish，intent 失去前台启动上下文（ActivityTaskManager 有 START 记录
-        //    但 activity 永不创建窗口；填充路径能弹是因点卡片时 client activity 活着）
-        // ② 服务进程直接 startActivity：同样被后台启动限制拦截
-        // ③ 通知通道：用户点按通知 = 真实交互，任何 ROM 放行；通知留存可补点。
-        android.util.Log.d("PenlyAutofill", "onSaveRequest: locked -> notify for save")
-        notifySavePending(form)
-        callback.onSuccess()
-    }
-
-    /**
-     * 锁定态保存（N8）：发高优先级通知，点按拉起 SAVE 模式解锁浮层。
-     * 通知留存通知栏，用户可稍后补点；点按属真实用户交互，不受后台启动限制。
-     * 文案只含来源包名（非敏感），账密密文经 Intent 传给浮层、不进通知。
-     */
-    private fun notifySavePending(form: ParsedForm) {
+        // 金库已锁：无主密钥无法加密入库。N8（锁定态保存）终态：
+        // onSuccess(intentSender) 官方通道直接拉浮层（AutofillAuthActivity SAVE 模式），
+        // 验证指纹/主密码后表单账密直接入库。前提：MIUI「后台弹出界面」权限
+        // （MIUIOP 10008）开启——被拒时静默吞掉无回调（曾用通知兜底，用户拍板移除，
+        // 依赖引导用户开权限，见 docs/autofill.md 2.4/4.4）。
+        // 表单值经浮层 Intent 内存传递，用后即弃不落盘。
+        android.util.Log.d("PenlyAutofill", "onSaveRequest: locked -> direct-launch save overlay")
         val intent = android.content.Intent(this, AutofillAuthActivity::class.java).apply {
             putExtra(AutofillAuthActivity.EXTRA_MODE, AutofillAuthActivity.MODE_SAVE)
             putExtra(AutofillAuthActivity.EXTRA_SAVE_TITLE, form.packageName)
@@ -156,31 +142,16 @@ class PenlyAutofillService : AutofillService() {
             putExtra(AutofillAuthActivity.EXTRA_SAVE_SECRET, form.passwordValue ?: "")
             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        val contentIntent = android.app.PendingIntent.getActivity(
+        val sender = android.app.PendingIntent.getActivity(
             this, REQUEST_CODE_SAVE, intent,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
-        )
-        val manager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-        val channel = android.app.NotificationChannel(
-            CHANNEL_SAVE_PENDING, "保存待验证",
-            android.app.NotificationManager.IMPORTANCE_HIGH,
-        ).apply { description = "锁定状态下从系统保存弹窗转来的待保存账密" }
-        manager.createNotificationChannel(channel)
-        val notification = android.app.Notification.Builder(this, CHANNEL_SAVE_PENDING)
-            .setSmallIcon(android.R.drawable.ic_input_add)
-            .setContentTitle("保存到印迹")
-            .setContentText("点按验证并保存 ${form.packageName} 的登录账密")
-            .setContentIntent(contentIntent)
-            .setAutoCancel(true)
-            .build()
-        manager.notify(NOTIFY_ID_SAVE_PENDING, notification)
+        ).intentSender
+        callback.onSuccess(sender)
     }
 
     companion object {
         private const val REQUEST_CODE_AUTH = 1001
         private const val REQUEST_CODE_SAVE = 1002
-        private const val CHANNEL_SAVE_PENDING = "autofill_save_pending"
-        private const val NOTIFY_ID_SAVE_PENDING = 2001
 
         /** 设置页判断/跳转用：本服务的启用状态查询走 [AutofillManager] */
         fun serviceComponentName(context: Context): String =
