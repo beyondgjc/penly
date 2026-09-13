@@ -112,6 +112,13 @@ adb shell settings put global autofill_logging_level 2   # 0=off 1=debug 2=verbo
   ActivityScenario 无限等 RESUMED——设备测试用探针页 + shell `am start` 代替
 - **SmartPower 快速回收 autofill 服务进程**（启动 800ms 即杀），建议加省电白名单
 - release 包日志剥离走 `-assumenosideeffects`（debug 包日志完整保留）
+- **「后台弹出界面」权限（MIUIOP 10008）**：拒绝时填充认证卡片/所有直启通道
+  **静默被拦**（ActivityTaskManager 有 START 记录但窗口永不创建，无拒绝日志）；
+  反复 installDebug/force-stop 后会被重置为拒绝。修复：
+  `adb shell appops set com.beyondguo.penly 10008 allow`（shell 可直接改 MIUI 私有 op）。
+  症状排查：`appops get <pkg> | grep MIUIOP` 看 rejectTime 是否对上操作时刻
+- **通知分类**：「通知过滤规则=系统推荐」把通知折叠进「不重要通知」且不弹横幅；
+  channel 级「悬浮通知」默认关——见 2.4 的引导步骤
 
 ### 4.5 AutofillValue 类型陷阱（N7，已踩实）
 `node.autofillValue?.textValue` 的 `?.` 防不住：控件是 checkbox/switch/list 等时
