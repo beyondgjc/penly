@@ -2,4 +2,14 @@
 <resources>
 
     <style name="Theme.Penly" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- Autofill 解锁浮层：透明窗口承载 BiometricPrompt/验证卡片，
+         悬浮在客户端 App 上、无页面跳转感（N9）。
+         注意：dim 由 Compose scrim 统一控制，勿开 backgroundDimEnabled——
+         系统 dim + scrim 双重叠加会把背景压成近全黑（实测反馈）。 -->
+    <style name="Theme.Penly.Translucent" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>

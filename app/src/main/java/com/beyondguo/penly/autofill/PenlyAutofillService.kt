@@ -77,9 +77,13 @@ class PenlyAutofillService : AutofillService() {
      * 用户点按 → 解锁浮层验证 → 回传只含命中条目的 FillResponse（指纹后直接填充）。
      */
     private fun buildAuthDataset(form: ParsedForm, matches: List<com.beyondguo.penly.data.VaultRepository.AutofillMatch>): FillResponse {
+        // N9：认证 intentSender 由系统在 client（被填充 app）Activity 里
+        // startIntentSenderForResult 启动——**不能加 FLAG_ACTIVITY_NEW_TASK**：
+        // 加了会被 affinity 匹配进印迹自己的任务并把印迹切到前台，透明浮层
+        // 透出的是印迹主页而非客户端登录页（实测截图实证）。不加 flag 时
+        // 浮层自然落到 client 任务栈顶，视觉=验证卡片悬浮在客户端上。
         val intent = android.content.Intent(this, AutofillAuthActivity::class.java).apply {
             putExtra(AutofillAuthActivity.EXTRA_CLIENT_STATE, AutofillResponseBuilder.clientState(form, matches.map { it.itemId }))
-            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         val sender = android.app.PendingIntent.getActivity(
             this, REQUEST_CODE_AUTH, intent,
@@ -150,7 +154,13 @@ class PenlyAutofillService : AutofillService() {
     }
 
     companion object {
-        private const val REQUEST_CODE_AUTH = 1001
+        // 1001→1003（N9）：PendingIntent record 按 component+requestCode 匹配复用，
+        // FLAG_UPDATE_CURRENT 官方语义只承诺替换 extras，**Intent 的 flags 不被更新**
+        // ——v3.0 初版 AUTH intent 带 NEW_TASK 创建了 record，后来源码删掉 NEW_TASK
+        // 后 record 仍残留旧 flags：系统 START 日志实证 flg=0x10000000 → NEW_TASK
+        // 启动 → client 立即收到 RESULT_CANCELED（data=null），setResult 的真响应
+        // 永远没人消费（指纹后字段不回填）。换 requestCode 逃逸旧 record。
+        private const val REQUEST_CODE_AUTH = 1003
         private const val REQUEST_CODE_SAVE = 1002
 
         /** 设置页判断/跳转用：本服务的启用状态查询走 [AutofillManager] */

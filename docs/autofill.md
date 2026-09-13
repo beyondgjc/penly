@@ -116,6 +116,12 @@ adb shell settings put global autofill_logging_level 2   # 0=off 1=debug 2=verbo
   反复 installDebug/force-stop 后会被重置为拒绝。修复：
   `adb shell appops set com.beyondguo.penly 10008 allow`（shell 可直接改 MIUI 私有 op）。
   症状排查：`appops get <pkg> | grep MIUIOP` 看 rejectTime 是否对上操作时刻
+- **运行时检测 = 不可行（产品决策 2026-09-13：按不可检测处理）**：该 op 是 MIUI
+  私有 AppOps——无标准字符串名（`cmd appops get <pkg> MIUIOP` → Unknown operation
+  string，新 API unsafeCheckOpNoThrow 进不去），int 版 checkOpNoThrow 在
+  compileSdk 34 已从公开 SDK 移除（运行时走反射 = 赌 hidden API 不拦，跨厂商/
+  跨版本全不可靠）；且它不是 manifest 权限，checkSelfPermission 体系查不到。
+  缺失时的静默失败只能靠发布引导（设置页/文档）缓解，不做代码检测。
 - **通知分类**：「通知过滤规则=系统推荐」把通知折叠进「不重要通知」且不弹横幅；
   channel 级「悬浮通知」默认关——见 2.4 的引导步骤
 

@@ -47,12 +47,15 @@
                 android:resource="@xml/autofill_service_config" />
         </service>
 
-        <!-- 自动填充解锁浮层（v3.0 项目⑤）：仅由本应用 PendingIntent 拉起，exported=false -->
+        <!-- 自动填充解锁浮层（v3.0 项目⑤）：仅由本应用 PendingIntent 拉起，exported=false。
+             透明主题（N9）：点认证卡片后指纹框直接悬浮在客户端上，无跳转感 -->
         <activity
             android:name=".autofill.AutofillAuthActivity"
             android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
             android:label="印迹 · 自动填充验证"
-            android:theme="@style/Theme.Penly" />
+            android:theme="@style/Theme.Penly.Translucent" />
     </application>
 
 </manifest>
