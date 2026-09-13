@@ -53,15 +53,17 @@ class PenlyAutofillService : AutofillService() {
             val matches = runCatching { runBlocking { repo.autofillMatchIndex(form.packageName) } }
                 .getOrNull().orEmpty()
             if (matches.isEmpty()) {
-                // 未命中：不弹填充提示，但保存链路必须保留——系统只把保存请求发给
-                // 认领过表单的服务，含密码字段的登录表单回占位数据集锚定保存
-                // （提交后弹「保存到印迹」）；无密码字段的表单（搜索框等）静默不参与。
+                // 未命中：聚焦阶段完全静默（无卡片），仅回 save-only 响应
+                // （只含 SaveInfo，零数据集）认领表单——用户手输提交后系统
+                // 即弹「保存到印迹」。无密码字段的表单（搜索框等）不参与。
                 if (form.passwordId == null) {
+                    android.util.Log.d("PenlyAutofill", "onFillRequest: no match, no pwd field -> null (silent)")
                     callback.onSuccess(null)
                     return
                 }
+                android.util.Log.d("PenlyAutofill", "onFillRequest: no match, pwd field -> save-only anchor")
                 callback.onSuccess(
-                    AutofillResponseBuilder.buildSaveAnchorResponse(applicationContext, form),
+                    AutofillResponseBuilder.buildSaveAnchorResponse(form),
                 )
                 return
             }
@@ -100,6 +102,8 @@ class PenlyAutofillService : AutofillService() {
         request: SaveRequest,
         callback: SaveCallback,
     ) {
+        val repo = applicationContext.penly.repo
+        android.util.Log.d("PenlyAutofill", "onSaveRequest: received (unlocked=${repo.unlocked.value})")
         val structure: AssistStructure = request.fillContexts.lastOrNull()?.structure
             ?: run { callback.onFailure("无法解析表单"); return }
         val form = FormParser.parse(structure)
@@ -107,7 +111,6 @@ class PenlyAutofillService : AutofillService() {
             callback.onFailure("无可保存的内容")
             return
         }
-        val repo = applicationContext.penly.repo
         if (repo.unlocked.value) {
             val ok = runCatching {
                 runBlocking {

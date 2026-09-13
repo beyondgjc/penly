@@ -98,14 +98,10 @@ object AutofillResponseBuilder {
             added++
         }
         if (added == 0) {
-            // 无匹配条目：放一个空值占位数据集锚定保存跟踪。
-            // 纯 SaveInfo 无数据集的响应在部分框架实现上不会触发保存 UI（N3 后续）；
-            // 占位数据集让框架把本表单锚定到印迹，用户手输提交后即可触发保存。
-            val views = presentation(context, "印迹", "手动输入后提交即可保存到印迹")
-            val dataset = Dataset.Builder()
-            form.usernameId?.let { dataset.setValue(it, AutofillValue.forText(""), views) }
-            form.passwordId?.let { dataset.setValue(it, AutofillValue.forText(""), views) }
-            builder.addDataset(dataset.build())
+            // 无匹配条目：不加任何数据集（聚焦阶段完全静默，无卡片打扰），
+            // 仅靠末尾的 SaveInfo 认领表单——save-only 响应，用户手输提交后
+            // 系统即弹「保存到印迹」。
+            android.util.Log.d("PenlyAutofill", "buildFillResponse: no fillable datasets, save-only anchor")
         }
         return builder
             .setSaveInfo(buildSaveInfo(form))
@@ -123,20 +119,17 @@ object AutofillResponseBuilder {
     }
 
     /**
-     * 锁定态未命中的「保存锚定」响应（N6 语义修正）。
+     * 锁定态未命中的「保存锚定」响应（N6 语义修正 v2）。
      *
-     * 没存过该应用的凭据 → **不弹填充提示**（没有可填充的数据集），但保存链路必须保留：
-     * 系统只把「保存」请求发给认领过表单的服务，因此仍需返回响应——
-     * 空值占位数据集 + SaveInfo，用户手输账密提交后系统即弹「保存到印迹」。
-     * 仅含密码字段的登录表单调用此函数；无密码字段的表单由服务侧静默不参与。
+     * 没存过该应用的凭据 → **聚焦阶段完全静默**（用户要求：不弹任何卡片），
+     * 仅返回 save-only 响应——只含 SaveInfo、零数据集（AOSP 官方支持的
+     * "save-only response" 模式）：表单被认领但无填充浮层，用户手输账密
+     * 提交后系统即弹「保存到印迹」。仅含密码字段的登录表单调用此函数；
+     * 无密码字段的表单由服务侧静默不参与。
      */
-    fun buildSaveAnchorResponse(context: Context, form: ParsedForm): FillResponse {
-        val views = presentation(context, "印迹", "登录后自动提示保存")
-        val dataset = Dataset.Builder()
-        form.usernameId?.let { dataset.setValue(it, AutofillValue.forText(""), views) }
-        form.passwordId?.let { dataset.setValue(it, AutofillValue.forText(""), views) }
+    fun buildSaveAnchorResponse(form: ParsedForm): FillResponse {
+        android.util.Log.d("PenlyAutofill", "buildSaveAnchorResponse: pkg=${form.packageName} user=${form.usernameId != null} pwd=${form.passwordId != null}")
         return FillResponse.Builder()
-            .addDataset(dataset.build())
             .setSaveInfo(buildSaveInfo(form))
             .build()
     }
