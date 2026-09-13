@@ -16,7 +16,10 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "com.beyondguo.penly"
-    compileSdk = 34
+    // 34→36（2026-09-13）：解锁 fragment-ktx ≥1.8（原钉 1.7.1，见 libs.versions.toml 注释）。
+    // 仅升 compileSdk 不升 targetSdk（34）——运行时行为不变（edge-to-edge 强制等
+    // 只由 targetSdk 决定），无迁移风险。
+    compileSdk = 36
 
     // 设备测试默认针对 debug 构建（开发态）；release 混淆回归时用
     // -PtestBuildType=release 切换，让 22 例设备测试直接跑在 R8 包上
@@ -26,8 +29,8 @@ android {
         applicationId = "com.beyondguo.penly"
         minSdk = 29
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 3
+        versionName = "3.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
