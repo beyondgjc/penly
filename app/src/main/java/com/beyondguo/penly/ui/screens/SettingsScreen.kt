@@ -100,6 +100,7 @@ fun SettingsScreen(
     // 系统自动填充启用状态（v3.0 项目⑤）：回到本页（从系统授权页返回）时刷新
     val autofillManager = context.getSystemService(android.view.autofill.AutofillManager::class.java)
     var autofillEnabled by remember { mutableStateOf(autofillManager?.hasEnabledAutofillServices() == true) }
+    var autofillCompatDialog by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         autofillEnabled = autofillManager?.hasEnabledAutofillServices() == true
     }
@@ -291,6 +292,13 @@ fun SettingsScreen(
                         )
                     },
                 )
+                // 兼容范围说明：管理用户预期——填充/保存依赖系统 autofill 协议，
+                // 自绘输入框（游戏/自建账号页）与 Compose、Flutter 界面收不到系统请求
+                SettingRow(
+                    title = "自动填充兼容范围",
+                    subtitle = "哪些 App 能填充/保存，哪些不行",
+                    onClick = { autofillCompatDialog = true },
+                )
                 // 入口刻意中性、无状态标记、无强调样式：
                 // 任何"已开启"提示都会让旁人一眼看出存在第二套数据
                 SettingRow(
@@ -380,6 +388,29 @@ fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { exportSavedPath = null }) { Text("我知道了") }
+            },
+        )
+    }
+
+    // ---- 自动填充兼容范围说明：管理预期（协议层边界，非印迹实现缺陷） ----
+    if (autofillCompatDialog) {
+        AlertDialog(
+            onDismissRequest = { autofillCompatDialog = false },
+            title = { Text("自动填充兼容范围") },
+            text = {
+                Text(
+                    "支持：使用系统标准输入框的 App 与浏览器/网页登录。" +
+                        "聚焦登录框时印迹会提示填充（指纹验证后直接填入）；" +
+                        "没存过的登录页保持安静，提交后系统会提示保存到印迹。\n\n" +
+                        "不支持：自绘输入框的 App（如部分游戏与自建账号页），" +
+                        "以及 Compose、Flutter 等未接入系统协议的界面——" +
+                        "系统不会发起填充请求，印迹无法感知此类页面。\n\n" +
+                        "遇到不支持的页面，请打开印迹手动添加记录。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { autofillCompatDialog = false }) { Text("我知道了") }
             },
         )
     }
