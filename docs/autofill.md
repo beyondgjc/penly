@@ -22,6 +22,12 @@ Android 框架只把 `onSaveRequest` 发给**对表单返回过响应**的服务
 返回 `null`（不认领）= 保存弹窗机制上不可能出现。
 系统侧证据：未认领时 `AutofillSession: handleLogContextCommitted(): last response is null`。
 
+**第二个前提（易踩）**：保存判定发生在**表单提交（commit）**时——通常即登录页
+Activity **finish**（`AutofillManager: onActivityFinishing(): calling commitLocked()`），
+或 App 显式调 `autofillManager.commit()`。
+表单填完但页面不退出（如登录成功只显示"欢迎回来"文案的测试页）→
+系统永远不做保存判定 → 保存弹窗机制上不可能弹出，与服务的实现无关。
+
 ### 2.2 save-only response（N6 语义修正 v2 的终态）
 用户产品要求：**没存过 → 聚焦阶段完全静默（不许出现任何卡片），
 但保存链路必须保留**。实现采用 AOSP 官方 save-only 模式：
@@ -94,6 +100,17 @@ adb shell settings put global autofill_logging_level 2   # 0=off 1=debug 2=verbo
   ActivityScenario 无限等 RESUMED——设备测试用探针页 + shell `am start` 代替
 - **SmartPower 快速回收 autofill 服务进程**（启动 800ms 即杀），建议加省电白名单
 - release 包日志剥离走 `-assumenosideeffects`（debug 包日志完整保留）
+
+### 4.5 AutofillValue 类型陷阱（N7，已踩实）
+`node.autofillValue?.textValue` 的 `?.` 防不住：控件是 checkbox/switch/list 等时
+AutofillValue 引用非空但类型非 text（type=2 toggle），`getTextValue()` 直接抛
+`IllegalStateException: value must be a text value`——服务进程在每次聚焦表单时崩溃
+重启（表现为"保存怎么都不弹"，无任何 UI 提示）。正确写法必须先判型再取值：
+```kotlin
+node.autofillValue?.takeIf { it.isText }?.textValue?.toString()
+```
+触发载体：autofilltest 的 LoginXmlActivity（标准表单 + 混入非 text 控件）。
+排查特征：logcat 反复出现 `AutofillService` 进程被杀 + `getTextValue` 异常栈。
 
 ## 5. 修复史速查（2026-09-13）
 

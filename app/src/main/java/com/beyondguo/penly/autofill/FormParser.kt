@@ -46,7 +46,11 @@ object FormParser {
             if (domain == null) node.webDomain?.let { domain = it }
             node.autofillId?.let { id ->
                 val kind = classifyField(node)
-                val value = node.autofillValue?.textValue?.toString()
+                // 注意：?. 防不住这里——AutofillValue 非 text 类型（checkbox/switch/list 等，
+                // type=2 toggle）时引用非空但 textValue 会抛 IllegalStateException
+                // ("value must be a text value")，必须先 isText 判型再取值。
+                val value = node.autofillValue?.takeIf { it.isText }
+                    ?.textValue?.toString()
                     ?.takeIf { it.isNotEmpty() }
                 when (kind) {
                     FieldKind.USERNAME -> {
