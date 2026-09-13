@@ -95,6 +95,14 @@ class AutofillAuthActivity : FragmentActivity() {
                             error = "解锁失败，请重试"
                             return@launch
                         }
+                        // 可见反馈：默认模式下浮层 <300ms 即自动完成并关闭，没有这条提示
+                        // 用户会以为"点了没反应"（N5）。空金库时本次点按的价值=认领表单，
+                        // 手输账密提交后才会触发保存提示。
+                        android.widget.Toast.makeText(
+                            applicationContext,
+                            "印迹已解锁：输入账密并登录后，将提示保存到印迹",
+                            android.widget.Toast.LENGTH_LONG,
+                        ).show()
                         respondFill()
                     }
                 }
