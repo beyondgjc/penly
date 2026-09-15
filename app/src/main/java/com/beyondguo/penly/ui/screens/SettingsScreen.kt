@@ -31,6 +31,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +47,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.beyondguo.penly.bio.BioManager
 import com.beyondguo.penly.crypto.CryptoEngine
 import com.beyondguo.penly.data.AppPrefs
@@ -97,12 +100,21 @@ fun SettingsScreen(
     var exportSavedPath by remember { mutableStateOf<String?>(null) }
     // 剪贴板自动清除开关：初值读 AppPrefs 内存缓存（Application.onCreate 已订阅 DataStore）
     var clipboardClearOn by remember { mutableStateOf(AppPrefs.clipboardAutoClear) }
-    // 系统自动填充启用状态（v3.0 项目⑤）：回到本页（从系统授权页返回）时刷新
+    // 系统自动填充启用状态（v3.0 项目⑤）：以系统真实状态为唯一事实源。
+    // 从系统授权页返回只触发 Activity onResume——Composition 不重建，LaunchedEffect(Unit)
+    // 不会重跑（曾因此导致"授权后返回开关不刷新"），必须挂生命周期 ON_RESUME；
+    // 首次进入时 Activity 已 RESUMED 收不到回调，初值仍由 remember 现查兜底。
     val autofillManager = context.getSystemService(android.view.autofill.AutofillManager::class.java)
     var autofillEnabled by remember { mutableStateOf(autofillManager?.hasEnabledAutofillServices() == true) }
     var autofillCompatDialog by remember { mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        autofillEnabled = autofillManager?.hasEnabledAutofillServices() == true
+    DisposableEffect(activity?.lifecycle, autofillManager) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                autofillEnabled = autofillManager?.hasEnabledAutofillServices() == true
+            }
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose { activity?.lifecycle?.removeObserver(observer) }
     }
 
     fun showToast(msg: String) {
@@ -452,12 +464,14 @@ fun SettingsScreen(
                                 bioError = "主密码错误"
                                 return@launch
                             }
-                            // 应急密码同样能通过校验，但不能用来配置指纹 ——
-                            // 那会让指纹直接打开另一份数据，用户却以为进的是主库
-                            if (!repo.isPrimary()) {
-                                bioOn = true
-                                bioDialog = false
-                                showToast("已开启指纹解锁")
+                            // 校验「输入的密码是当前金库的密码」：指纹永远只打开
+                            // 当前会话正在看的这份，主库会话输应急密码会被拒（它开
+                            // 的是另一槽位）。旧逻辑用 isPrimary()（会话是否主库）
+                            // 有两处错：① 真主人被误伤——isPrimary() 判 false 时
+                            // 假报"已开启"却不落盘（saveMaster 未调用），重进页面
+                            // 开关弹回关；② 它声称要防的跨库场景实际判定不到。
+                            if (!repo.verifyCurrentVaultPassword(bioMaster)) {
+                                bioError = "主密码错误"
                                 return@launch
                             }
                             BioManager.saveMaster(

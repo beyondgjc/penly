@@ -291,6 +291,21 @@ class VaultRepository(private val store: VaultStore) {
         ok
     }
 
+    /**
+     * 校验 [master] 是不是「当前已解锁金库」（会话槽位）的密码。
+     *
+     * 与 [verifyPassword]（任一槽位匹配即过）不同：只认当前会话金库自己的密码——
+     * 指纹解锁缓存副本的场景必须用它，保证「指纹永远只打开当前正在看的这份」，
+     * 在主库会话输应急密码会被拒（应急密码开的是另一槽位），反之亦然。
+     */
+    suspend fun verifyCurrentVaultPassword(master: String): Boolean {
+        val slot = SessionManager.activeSlotOrNull() ?: return false
+        val key = withContext(Dispatchers.Default) { tryUnlock(slot, master) }
+        val ok = key != null
+        key?.fill(0)
+        return ok
+    }
+
     /** default 模式一键解锁（内置默认主密码） */
     suspend fun unlockDefault(): Boolean {
         if (requiresPassword()) return false
