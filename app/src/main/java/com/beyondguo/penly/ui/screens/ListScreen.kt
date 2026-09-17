@@ -89,8 +89,11 @@ fun ListScreen(repo: VaultRepository, onOpen: (String) -> Unit, onSettings: () -
     LaunchedEffect(Unit) {
         val list = repo.items()
         items = list
-        // 列表已解锁可见，解密账号做副标题展示与账号搜索
-        accounts = list.associate { it.id to repo.decryptAccount(it) }
+        // 列表已解锁可见，解密账号做副标题展示与账号搜索。
+        // 逐条降级：单条解密/验签失败（坏数据）不让整页崩掉（review C1）
+        accounts = list.associate {
+            it.id to runCatching { repo.decryptAccount(it) }.getOrDefault("")
+        }
         loaded = true
     }
 

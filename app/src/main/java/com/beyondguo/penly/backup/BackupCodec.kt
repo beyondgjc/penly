@@ -9,7 +9,10 @@ import kotlinx.serialization.json.Json
 
 /**
  * `private-vault-backup` v1 备份文件编解码。
- * 与小程序 services/export.js 产出格式逐字段对齐；唯一扩展是 crypto.masterRef（小程序会忽略未知字段）。
+ * 与小程序 services/export.js 产出格式对齐。字段级扩展：
+ * - crypto.masterRef（小程序会忽略未知字段）；
+ * - v1.1 起 items 的 accountMac/secretMac/noteMac/totpMac 完整性校验字段（encrypt-then-MAC，
+ *   子密钥语义见 [CryptoEngine.MAC_INFO]；小程序原生写入前三者，Android 自 2026-09-17 起解析/透传/验签/回写）。
  */
 @Serializable
 data class BackupCrypto(

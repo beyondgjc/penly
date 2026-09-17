@@ -103,6 +103,16 @@ data class VaultItem(
      * 空串 = 无来源（手动创建的条目，填充时全量展示）。
      */
     @SerialName("appPackage") val appPackage: String = "",
+    /**
+     * 记录完整性 MAC（v1.1 跨端契约扩展，encrypt-then-MAC）：
+     * HMAC-SHA256(子密钥, ivB64 + "." + 密文B64)，子密钥派生见 CryptoEngine.MAC_INFO。
+     * 空串 = 无校验（旧数据/手动构造），读取时宽容跳过；四组与四个加密字段一一对应。
+     */
+    @SerialName("accountMac") val accountMac: String = "",
+    @SerialName("secretMac") val secretMac: String = "",
+    @SerialName("noteMac") val noteMac: String = "",
+    /** totp 为 Android 单侧扩展字段，Mac 同样只在 Android 侧计算与验证 */
+    @SerialName("totpMac") val totpMac: String = "",
     @SerialName("createdAt") val createdAt: Long = 0,
     @SerialName("updatedAt") val updatedAt: Long = 0,
 )

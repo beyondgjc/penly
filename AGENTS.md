@@ -12,7 +12,7 @@ v1 格式互认备份（契约两端一致，不可单方改）。
 ## 构建与真机
 
 - AGP 8.7.2 需 Java 17+；系统 `JAVA_HOME` 是 jdk-11 会失败。构建前设：
-  `$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'`（Java 21 首选）。
+  `$env:JAVA_HOME='C:\Program Files\Android\Android Studio1\jbr'`（AS 更新后目录名带 1，Java 21）。
 - 构建/装机：`./gradlew :app:installDebug`（真机 MI_8）。
 - release 回归一键：`./gradlew :app:connectedReleaseAndroidTest -PtestBuildType=release`。
 - 测试包 R8 两坑：androidTest 只读 `testProguardFiles()`（规则在 `app/proguard-test-rules.pro`）；
@@ -57,9 +57,14 @@ v1 格式互认备份（契约两端一致，不可单方改）。
 - `private-vault-backup` **v1 两端一致，不可单方改**：PBKDF2 10万次/16B salt ·
   AES-256-CBC/PKCS7 · 导入三态 `wiped/restored/reencrypted`；`masterRef`：
   `penly-def-v1` / `wxb-def-v1`（需 `meta.openid`）/ 缺省 = custom 主密码。
+- **v1.1 完整性字段**（2026-09-17 起 Android 全对齐）：`accountMac/secretMac/noteMac/totpMac`
+  encrypt-then-MAC；子密钥 = `HMAC-SHA256(key=utf8("yinji-record-mac-v1"), msg=字段密钥)`
+  ——**实参顺序与常规写法相反**（crypto.js:228 部署语义，照抄勿"修正"）；MAC 输入 = 存储的
+  `ivB64 + "." + ctB64` 逐字使用。验签规则：`ct 与 mac 都非空才验`，缺任一宽容跳过；
+  改密/导入重加密遇 Mac 不符 → 中止整个操作（fail-closed）。
 - 陷阱：`BackupCodec` 的 Json 未开 `encodeDefaults` → 默认值不落盘（隐式契约，
   任一端改 `pwdMode === 'custom'` 判断即崩）；`tools/gen_test_fixtures.mjs` 是 v1.0 旧格式。
-- 已知 P1：小程序 v1.1 的 `accountMac/secretMac/noteMac` 本端未透传（往返后 MAC 归零）。
+- 已知限制：小程序不识别 totp 字段 → 跨端往返 totp 同型丢失（Mac 亦然，无假警报）。
 
 ## 发布管线
 
@@ -67,9 +72,10 @@ v1 格式互认备份（契约两端一致，不可单方改）。
   `keystore.properties`（gitignore）；产物归档 `release/vX.Y.Z/`（mapping 勿公开）；
   `release/` 目录 untracked，「加 gitignore」是既有待办。
 
-## 进度快照（2026-09-17）
+## 进度快照（2026-09-18）
 
 - v2.0.0 已发布；v3.0.0 正式包已构建归档；v4.0 推进中。
-- 已提交：MIUI 两步引导（d2f56da）、autofill 应用名标题+存过才提示（5a9ad2b）。
-- 双槽位 `commitSlots{}` 原子提交已实现，待真机回归（改密/应急/导入）后提交；
-  待办：T1 原子性 device test、C1/C2 裸 decryptAccount 兜底、C6 槽位日志清理。
+- 已提交：MIUI 两步引导（d2f56da）、autofill 应用名标题+存过才提示（5a9ad2b）、AGENTS.md（bb0f5d8）。
+- 双槽位 `commitSlots{}` 原子提交 + encrypt-then-MAC 四元组（含 v1.1 跨端对齐）已实现，
+  单测/固定向量/真机 device test 全过（SlotWriteAtomicityDeviceTest 4/4、RecordMacDeviceTest 3/3），
+  **待用户真机回归后提交**；待办：C6 槽位日志清理、备份文件级完整性（可选）。

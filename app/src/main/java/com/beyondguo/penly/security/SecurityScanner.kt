@@ -21,7 +21,8 @@ object SecurityScanner {
         onProgress: suspend (done: Int, total: Int) -> Unit = { _, _ -> },
     ): SecurityReport {
         val items = repo.items() // VaultItem（密文）
-        val plain = items.map { repo.decryptItem(it) } // PlainEntry（明文 secret）
+        // 逐条降级（review C5）：坏条目跳过，不把整个体检判死（调用方有整体 try/catch）
+        val plain = items.mapNotNull { runCatching { repo.decryptItem(it) }.getOrNull() } // PlainEntry（明文 secret）
 
         val sha = MessageDigest.getInstance("SHA-256")
         val reusedSet = PasswordHealth.reusedHashes(plain.map { it.secret })

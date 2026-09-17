@@ -7,6 +7,7 @@ import com.beyondguo.penly.backup.BackupData
 import com.beyondguo.penly.backup.BackupFile
 import com.beyondguo.penly.backup.BackupFormatException
 import com.beyondguo.penly.crypto.CryptoEngine
+import com.beyondguo.penly.crypto.MacVerificationException
 import com.beyondguo.penly.crypto.SessionManager
 import com.beyondguo.penly.search.Embedder
 import com.beyondguo.penly.search.EmbedderFactory
@@ -638,7 +639,8 @@ class VaultRepository(private val store: VaultStore) {
      * `secret` **明确不入索引**：密码本身没有检索语义，入索引只会扩大敏感面（方案 §3.1）。
      */
     private suspend fun VaultItem.toSearchEntry(): SearchEntry {
-        val account = if (accountEnc.isBlank()) "" else decryptAccount(this)
+        // 逐条降级（review C2）：单条解密/验签失败只影响该条索引，不让后台重建崩掉
+        val account = if (accountEnc.isBlank()) "" else runCatching { decryptAccount(this) }.getOrDefault("")
         val note = if (noteEnc.isBlank()) "" else runCatching {
             CryptoEngine.aesDecrypt(
                 CryptoEngine.EncPayload(noteIv, noteEnc),
@@ -669,19 +671,27 @@ class VaultRepository(private val store: VaultStore) {
     suspend fun item(id: String): VaultItem? =
         store.readItems(SessionManager.requireSlot()).firstOrNull { it.id == id }
 
-    /** 解密条目；未解锁抛 [com.beyondguo.penly.crypto.VaultLockedException] */
+    /**
+     * 解密条目；未解锁抛 [com.beyondguo.penly.crypto.VaultLockedException]。
+     * 带 MAC 的字段先验签（encrypt-then-MAC），不符 ≡ 解密失败一并抛出——
+     * 展示面由调用方逐条降级，写回面（EditScreen）fail-closed。
+     */
     suspend fun decryptItem(item: VaultItem): PlainEntry {
         val key = SessionManager.requireKey()
-        fun dec(enc: String, iv: String): String =
-            if (enc.isBlank()) "" else CryptoEngine.aesDecrypt(CryptoEngine.EncPayload(iv, enc), key)
+        val mk = CryptoEngine.macSubKey(key)
+        fun dec(enc: String, iv: String, mac: String): String {
+            if (enc.isBlank()) return ""
+            if (!CryptoEngine.verifyRecordMac(mk, iv, enc, mac)) throw MacVerificationException()
+            return CryptoEngine.aesDecrypt(CryptoEngine.EncPayload(iv, enc), key)
+        }
         return PlainEntry(
             id = item.id,
             title = item.title,
             category = item.category,
-            account = dec(item.accountEnc, item.accountIv),
-            secret = dec(item.secretEnc, item.secretIv),
-            note = dec(item.noteEnc, item.noteIv),
-            totp = dec(item.totpEnc, item.totpIv),
+            account = dec(item.accountEnc, item.accountIv, item.accountMac),
+            secret = dec(item.secretEnc, item.secretIv, item.secretMac),
+            note = dec(item.noteEnc, item.noteIv, item.noteMac),
+            totp = dec(item.totpEnc, item.totpIv, item.totpMac),
             totpDigits = item.totpDigits,
             totpPeriod = item.totpPeriod,
             totpAlgo = item.totpAlgo,
@@ -691,13 +701,15 @@ class VaultRepository(private val store: VaultStore) {
         )
     }
 
-    /** 仅解密账号字段（列表副标题用，比整条解密轻量） */
-    suspend fun decryptAccount(item: VaultItem): String =
-        if (item.accountEnc.isBlank()) ""
-        else CryptoEngine.aesDecrypt(
-            CryptoEngine.EncPayload(item.accountIv, item.accountEnc),
-            SessionManager.requireKey(),
-        )
+    /** 仅解密账号字段（列表副标题用，比整条解密轻量）；验签语义同 [decryptItem] */
+    suspend fun decryptAccount(item: VaultItem): String {
+        if (item.accountEnc.isBlank()) return ""
+        val key = SessionManager.requireKey()
+        if (!CryptoEngine.verifyRecordMac(CryptoEngine.macSubKey(key), item.accountIv, item.accountEnc, item.accountMac)) {
+            throw MacVerificationException()
+        }
+        return CryptoEngine.aesDecrypt(CryptoEngine.EncPayload(item.accountIv, item.accountEnc), key)
+    }
 
     /** 新增或更新（title/category 明文索引，account/secret/note/totp 加密；totp 参数非敏感明文存储） */
     suspend fun saveEntry(
@@ -715,15 +727,17 @@ class VaultRepository(private val store: VaultStore) {
     ): String {
         val key = SessionManager.requireKey()
         val slot = SessionManager.requireSlot()
-        fun enc(plain: String): Pair<String, String> =
-            if (plain.isEmpty()) "" to "" else {
+        // encrypt-then-MAC：加密即算 Mac（四元组：account/secret/note/totp；空字段三空）
+        val macKey = CryptoEngine.macSubKey(key)
+        fun enc(plain: String): Triple<String, String, String> =
+            if (plain.isEmpty()) Triple("", "", "") else {
                 val p = CryptoEngine.aesEncrypt(plain, key)
-                p.dataB64 to p.ivB64
+                Triple(p.dataB64, p.ivB64, CryptoEngine.recordMac(macKey, p.ivB64, p.dataB64))
             }
-        val (aE, aI) = enc(account)
-        val (sE, sI) = enc(secret)
-        val (nE, nI) = enc(note)
-        val (tE, tI) = enc(totpSecret)
+        val (aE, aI, aM) = enc(account)
+        val (sE, sI, sM) = enc(secret)
+        val (nE, nI, nM) = enc(note)
+        val (tE, tI, tM) = enc(totpSecret)
         val now = System.currentTimeMillis()
         val old = id?.let { item(it) }
         val newItem = VaultItem(
@@ -737,6 +751,7 @@ class VaultRepository(private val store: VaultStore) {
             totpDigits = totpDigits, totpPeriod = totpPeriod,
             totpAlgo = totpAlgo,
             appPackage = appPackage,
+            accountMac = aM, secretMac = sM, noteMac = nM, totpMac = tM,
             createdAt = old?.createdAt ?: now,
             updatedAt = now,
         )
@@ -791,7 +806,14 @@ class VaultRepository(private val store: VaultStore) {
             val newSaltB64 = CryptoEngine.randomSaltB64()
             val newKey = CryptoEngine.deriveKeyB64(newPlain, newSaltB64)
             val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(newKey)
-            val reEnc = reEncryptItems(store.readItems(slot), oldKey, newKey)
+            val reEnc = try {
+                reEncryptItems(store.readItems(slot), oldKey, newKey)
+            } catch (e: MacVerificationException) {
+                // 有记录被篡改/损坏：整个改密中止，磁盘保持原状（以前这类记录会静默变乱码）
+                oldKey.fill(0)
+                newKey.fill(0)
+                return@withContext e.message
+            }
             oldKey.fill(0)
             val ts = System.currentTimeMillis()
 
@@ -928,7 +950,12 @@ class VaultRepository(private val store: VaultStore) {
         val targetKey = CryptoEngine.deriveKeyB64(CryptoEngine.ANDROID_DEFAULT_MASTER, newSaltB64)
         val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(targetKey)
         val now = System.currentTimeMillis()
-        val reEnc = reEncryptItems(items, srcKey, targetKey)
+        val reEnc = try {
+            reEncryptItems(items, srcKey, targetKey)
+        } catch (e: MacVerificationException) {
+            // 备份内记录 MAC 与密文不符：拒绝导入，本地数据不受影响
+            throw ImportException(e.message ?: "备份完整性校验失败")
+        }
         rebuildBothSlots(
             VaultMeta(newSaltB64, newVerify, newVerifyIv, VaultMeta.MODE_DEFAULT, true, now, now),
             reEnc,
@@ -985,32 +1012,46 @@ class VaultRepository(private val store: VaultStore) {
 
     // ---------------- 工具 ----------------
 
-    /** 明文条目 → 密文条目（用指定密钥；影子数据用影子槽位的密钥） */
+    /** 明文条目 → 密文条目（用指定密钥；影子数据用影子槽位的密钥）。加密即算 Mac（四元组） */
     private fun encryptEntries(entries: List<PlainEntry>, key: ByteArray): List<VaultItem> =
         entries.map { e ->
-            fun enc(s: String): Pair<String, String> =
-                if (s.isEmpty()) "" to "" else {
+            val mk = CryptoEngine.macSubKey(key)
+            fun enc(s: String): Triple<String, String, String> =
+                if (s.isEmpty()) Triple("", "", "") else {
                     val p = CryptoEngine.aesEncrypt(s, key)
-                    p.dataB64 to p.ivB64
+                    Triple(p.dataB64, p.ivB64, CryptoEngine.recordMac(mk, p.ivB64, p.dataB64))
                 }
-            val (aE, aI) = enc(e.account)
-            val (sE, sI) = enc(e.secret)
-            val (nE, nI) = enc(e.note)
+            val (aE, aI, aM) = enc(e.account)
+            val (sE, sI, sM) = enc(e.secret)
+            val (nE, nI, nM) = enc(e.note)
             VaultItem(
                 id = e.id,
                 title = e.title,
                 category = e.category,
-                accountEnc = aE, accountIv = aI,
-                secretEnc = sE, secretIv = sI,
-                noteEnc = nE, noteIv = nI,
+                accountEnc = aE, accountIv = aI, accountMac = aM,
+                secretEnc = sE, secretIv = sI, secretMac = sM,
+                noteEnc = nE, noteIv = nI, noteMac = nM,
                 createdAt = e.createdAt,
                 updatedAt = e.updatedAt,
             )
         }
 
-    /** 用 oldKey 解密、newKey 重加密全部条目的四个密文字段（漏掉 totp 会改密后 2FA 不可恢复） */
+    /**
+     * 用 oldKey 解密、newKey 重加密全部条目的四个密文字段（漏掉 totp 会改密后 2FA 不可恢复）。
+     * encrypt-then-MAC：重加密前**严格验旧 Mac**（带 Mac 且不符 → 中止整个操作，对齐
+     * 小程序 crypto.js:249-252 的从严语义），重加密后按 newKey 重算全部 Mac。
+     */
     private fun reEncryptItems(items: List<VaultItem>, oldKey: ByteArray, newKey: ByteArray): List<VaultItem> {
+        val oldMk = CryptoEngine.macSubKey(oldKey)
+        val newMk = CryptoEngine.macSubKey(newKey)
         return items.map { it ->
+            if (!CryptoEngine.verifyRecordMac(oldMk, it.accountIv, it.accountEnc, it.accountMac) ||
+                !CryptoEngine.verifyRecordMac(oldMk, it.secretIv, it.secretEnc, it.secretMac) ||
+                !CryptoEngine.verifyRecordMac(oldMk, it.noteIv, it.noteEnc, it.noteMac) ||
+                !CryptoEngine.verifyRecordMac(oldMk, it.totpIv, it.totpEnc, it.totpMac)
+            ) {
+                throw MacVerificationException()
+            }
             fun re(enc: String, iv: String): Pair<String, String> =
                 if (enc.isBlank()) "" to "" else {
                     val plain = CryptoEngine.aesDecrypt(CryptoEngine.EncPayload(iv, enc), oldKey)
@@ -1021,7 +1062,16 @@ class VaultRepository(private val store: VaultStore) {
             val (sE, sI) = re(it.secretEnc, it.secretIv)
             val (nE, nI) = re(it.noteEnc, it.noteIv)
             val (tE, tI) = re(it.totpEnc, it.totpIv)
-            it.copy(accountEnc = aE, accountIv = aI, secretEnc = sE, secretIv = sI, noteEnc = nE, noteIv = nI, totpEnc = tE, totpIv = tI)
+            it.copy(
+                accountEnc = aE, accountIv = aI,
+                secretEnc = sE, secretIv = sI,
+                noteEnc = nE, noteIv = nI,
+                totpEnc = tE, totpIv = tI,
+                accountMac = if (aE.isBlank()) "" else CryptoEngine.recordMac(newMk, aI, aE),
+                secretMac = if (sE.isBlank()) "" else CryptoEngine.recordMac(newMk, sI, sE),
+                noteMac = if (nE.isBlank()) "" else CryptoEngine.recordMac(newMk, nI, nE),
+                totpMac = if (tE.isBlank()) "" else CryptoEngine.recordMac(newMk, tI, tE),
+            )
         }
     }
 }

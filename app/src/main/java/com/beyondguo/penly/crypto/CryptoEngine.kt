@@ -3,10 +3,14 @@ package com.beyondguo.penly.crypto
 import java.security.SecureRandom
 import java.util.Base64
 import javax.crypto.Cipher
+import javax.crypto.Mac
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
+
+/** 记录完整性校验失败：密文/IV 与 MAC 不符（被篡改或损坏）。消息保持中性，不泄露任何细节 */
+class MacVerificationException(message: String = "数据完整性校验失败，记录可能被篡改") : Exception(message)
 
 /**
  * 加密引擎 —— 与小程序 utils/crypto.js 严格字节级互认（详见《Android端实现方案.md》§1）。
@@ -106,5 +110,49 @@ object CryptoEngine {
         } catch (_: Exception) {
             false
         }
+    }
+
+    // ---------------- 记录完整性（encrypt-then-MAC，v1.1 跨端契约扩展） ----------------
+    //
+    // AES-CBC 无完整性：密文可被逐位翻转且解密不报错。为加密字段附加 HMAC-SHA256 校验值，
+    // 与小程序 utils/crypto.js:226-232 逐字节互认（MAC_INFO/子密钥/输入拼接/空字段语义均一致）。
+
+    /** MAC 子密钥派生信息串（与小程序 crypto.js:226 一致，发布后不可更改） */
+    const val MAC_INFO = "yinji-record-mac-v1"
+
+    /**
+     * MAC 子密钥。
+     * ⚠️ 逐字节对齐小程序 crypto.js:228 的**部署语义**：`cl.hmacSha256(utf8(MAC_INFO), key32)`
+     * 的实参顺序是反直觉的——**信息串作 HMAC key，32 字节字段密钥作 message**：
+     * `HMAC-SHA256(key=utf8("yinji-record-mac-v1"), msg=key32)`。
+     * 这是线上已部署格式，Android 必须照抄，不得"顺手修正"为常规顺序。
+     */
+    fun macSubKey(key: ByteArray): ByteArray {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(MAC_INFO.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+        return mac.doFinal(key)
+    }
+
+    /**
+     * 单字段 MAC：Base64(HMAC-SHA256(子密钥, utf8("<ivB64>.<dataB64>")))。
+     * 输入**逐字使用存储的 Base64 字符串**——两端通过 JSON 交换同一批字符串，无重编码漂移面。
+     */
+    fun recordMac(macSubKey: ByteArray, ivB64: String, dataB64: String): String {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(macSubKey, "HmacSHA256"))
+        return Base64.getEncoder().encodeToString(
+            mac.doFinal("$ivB64.$dataB64".toByteArray(Charsets.UTF_8)),
+        )
+    }
+
+    /**
+     * 验证单字段 MAC。语义与小程序完全同构：
+     * - 密文为空 → true（空字段三空，无可验证物）
+     * - MAC 为空 → true（旧数据/无 Mac 记录，宽容跳过——crypto.js:250 `if (mac && …)`）
+     * - 其余 → 重算比对，不符 = 密文或 IV 被篡改/损坏
+     */
+    fun verifyRecordMac(macSubKey: ByteArray, ivB64: String, dataB64: String, macB64: String): Boolean {
+        if (dataB64.isBlank() || macB64.isBlank()) return true
+        return recordMac(macSubKey, ivB64, dataB64) == macB64
     }
 }

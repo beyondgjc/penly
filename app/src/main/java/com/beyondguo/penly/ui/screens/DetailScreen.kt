@@ -66,6 +66,9 @@ fun DetailScreen(
     val context = LocalContext.current
     var entry by remember { mutableStateOf<PlainEntry?>(null) }
     var missing by remember { mutableStateOf(false) }
+    // 解密/完整性验签失败（含 MacVerificationException）：中性提示，不区分原因、
+    // 不提"损坏/影子/篡改"（不可证伪性约束——失败可能是槽位性质使然）
+    var loadFailed by remember { mutableStateOf(false) }
     var secretVisible by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(itemId) {
@@ -76,6 +79,7 @@ fun DetailScreen(
             entry = try {
                 repo.decryptItem(v)
             } catch (_: Exception) {
+                loadFailed = true
                 null
             }
         }
@@ -188,6 +192,12 @@ fun DetailScreen(
             }
             missing -> Text(
                 "记录不存在",
+                style = MaterialTheme.typography.bodyMedium,
+                color = PenText3,
+                modifier = Modifier.padding(20.dp),
+            )
+            loadFailed -> Text(
+                "记录读取失败，请重试",
                 style = MaterialTheme.typography.bodyMedium,
                 color = PenText3,
                 modifier = Modifier.padding(20.dp),

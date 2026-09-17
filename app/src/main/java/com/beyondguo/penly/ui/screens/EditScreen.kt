@@ -85,6 +85,9 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
     var error by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var prefilled by rememberSaveable { mutableStateOf(false) }
+    // 预填失败标记（fail-closed，review C4）：编辑模式下解密/验签失败仍允许保存，
+    // 用户填个标题按保存就会用空串覆盖 account/secret/note/totp —— 静默毁数据
+    var loadFailed by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     // 扫码录入 2FA 密钥：zxing 取景 Activity 返回的通常是 otpauth:// 链接或裸密钥，
@@ -109,12 +112,20 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
                     totpAlgo = e.totpAlgo
                     prefilled = true
                 } catch (_: Exception) {
+                    // 解密/完整性验签失败：标记 fail-closed，禁止保存覆盖真实数据
+                    loadFailed = true
                 }
             }
         }
     }
 
     fun save() {
+        // 编辑模式必须先成功预填：读取中/读取失败都禁止保存（fail-closed，防空串覆盖真实数据）
+        if (isEdit && !prefilled) {
+            error = if (loadFailed) "记录读取失败，为保护数据已禁止保存"
+            else "正在读取记录，请稍候"
+            return
+        }
         if (name.isBlank() && account.isBlank() && secret.isBlank()) {
             error = "至少填写 名称 / 账号 / 密码 一项"
             return

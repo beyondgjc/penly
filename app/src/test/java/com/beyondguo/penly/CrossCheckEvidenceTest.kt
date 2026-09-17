@@ -194,23 +194,30 @@ class CrossCheckEvidenceTest {
         write("crosscheck_android_default.json", json)
     }
 
-    // ================= 任务 #3-1：MAC 静默丢失往返 =================
+    // ================= 任务 #3-1：MAC 往返（v1.1 对齐后：保留且可验） =================
 
-    /** 小程序(带MAC) → Android 导入(丢弃MAC) → Android 再导出：MAC 静默消失。 */
+    /** 小程序(带MAC) → Android 导入 → Android 再导出：MAC 保留，且 Android 重算验签逐条通过（P1 已修复）。 */
     @Test
-    fun task3_1_macSilentlyLostOnAndroidRoundTrip() {
+    fun task3_1_macPreservedOnAndroidRoundTrip() {
         val inbound = read("crosscheck_mp_custom.json")
         val file = BackupCodec.decode(inbound)                       // 导入
         assertTrue(inbound.contains("accountMac"))
-        // 复刻 exportJson（VaultRepository.kt:766-792）：custom 模式原样落地 → 再导出
+        // 复刻 exportJson（VaultRepository.kt）：custom 模式原样落地 → 再导出
         val outbound = encodeAsExportJson(
             file.data.meta!!,
             file.data.items,
             masterRef = null,
         )
-        assertFalse("往返后 MAC 已静默丢失", outbound.contains("Mac"))
-        // 但密文原样保留，明文仍可解（用户无感知）
+        assertTrue("往返后 MAC 必须保留（P1 已修复，旧断言为 assertFalse）", outbound.contains("accountMac"))
+        // 跨端字节级闸门：Android 用同一子密钥重算，与小程序写入的 Mac 逐条比对一致
         val key = CryptoEngine.deriveKeyB64(mstr("customMaster"), file.data.meta!!.saltB64)
+        val mk = CryptoEngine.macSubKey(key)
+        file.data.items.forEach { item ->
+            assertTrue("accountMac 验签: ${item.id}", CryptoEngine.verifyRecordMac(mk, item.accountIv, item.accountEnc, item.accountMac))
+            assertTrue("secretMac 验签: ${item.id}", CryptoEngine.verifyRecordMac(mk, item.secretIv, item.secretEnc, item.secretMac))
+            assertTrue("noteMac 验签: ${item.id}", CryptoEngine.verifyRecordMac(mk, item.noteIv, item.noteEnc, item.noteMac))
+        }
+        // 密文原样保留，明文仍可解
         val it0 = file.data.items.first { it.title == "银行账号-实证" }
         assertEquals(
             "P@ss中文✅-secret",
