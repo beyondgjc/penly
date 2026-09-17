@@ -101,10 +101,18 @@ dependencies {
     implementation(libs.pinyin4j)
     // 扫码录入 2FA 密钥（v3.0 项目④）：自带取景 Activity 与相机权限流程
     implementation(libs.zxing.android.embedded)
-    // 端内 AI 检索：ONNX Runtime（Android CPU 推理）+ bge-small-zh-v1.5 int8 模型（assets/models/）
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    // 端内 AI 检索：ONNX Runtime（Android CPU 推理）+ bge-small-zh-v1.5 int8 模型（assets/models/）。
+    // 1.20.0→1.21.1（2026-09-17）：1.21 起原生库按 16 KB 页对齐（Android 15+ 设备要求），
+    // 1.20.0 的 libonnxruntime4j_jni.so 未对齐会在 16 KB 设备上加载失败；选 1.21 线终态 = 最小漂移
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.21.1")
     testImplementation(libs.junit)
     // JVM 单测跑中文召回评测用桌面版 onnxruntime（与 Android 版同一套 ai.onnxruntime API）
+    // 桌面版锁 1.20.0：ORT 1.21 起 Windows 构建工具链升到 MSVC 14.40，要求 JDK 捆绑的
+    // msvcp140.dll 同版本，JBR 21.0.10 捆绑的是旧版 → onnxruntime.dll 的 DllMain 初始化
+    // 失败（UnsatisfiedLinkError "DLL 初始化例程失败"）。已知问题 microsoft/onnxruntime#23971。
+    // 二分验证（2026-09-17）：JBR 21.0.10 + 1.20.0 通过。仅 JVM 单测受影响——APK 侧
+    // onnxruntime-android 1.21.1 不走 MSVC runtime，无此问题。将来若桌面版要升：
+    // 换最新 Temurin/Zulu 跑单测（toolchain），勿动 JBR 捆绑的 msvcp140.dll。
     testImplementation("com.microsoft.onnxruntime:onnxruntime:1.20.0")
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
