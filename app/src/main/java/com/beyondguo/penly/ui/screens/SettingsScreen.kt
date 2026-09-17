@@ -61,6 +61,7 @@ import com.beyondguo.penly.ui.components.SettingCard
 import com.beyondguo.penly.ui.components.SettingRow
 import com.beyondguo.penly.util.ClipboardGuard
 import com.beyondguo.penly.util.MiuiBgUi
+import com.beyondguo.penly.util.UpdateChecker
 import com.beyondguo.penly.ui.theme.PenDanger
 import com.beyondguo.penly.ui.theme.PenGreen
 import com.beyondguo.penly.ui.theme.PenText3
@@ -114,6 +115,16 @@ fun SettingsScreen(
     // ——纯引导：第一步系统授权页返回且确认授权成功后，自动进入第二步跳权限页。
     val showBgUiGuide = remember { MiuiBgUi.isMiui() }
     var awaitBgUiStep by remember { mutableStateOf(false) }
+    // 检查更新（v4.0）：当前版本号以 PackageManager 为准（此前 UI 硬编码 2.0.0 与实际 build 脱节）
+    val versionName = remember {
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+    }
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var newRelease by remember { mutableStateOf<UpdateChecker.GhRelease?>(null) }
     DisposableEffect(activity?.lifecycle, autofillManager) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -391,7 +402,36 @@ fun SettingsScreen(
                 // 兼容范围说明：管理用户预期——填充/保存依赖系统 autofill 协议，
                 // 自绘输入框（游戏/自建账号页）与 Compose、Flutter 界面收不到系统请求
                 SettingRow(title = "自动填充兼容范围", onClick = { autofillCompatDialog = true })
-                SettingRow(title = "版本", trailing = { Text("2.0.0", color = PenText3) })
+                // 检查更新（v4.0）：GitHub Releases 为版本事实源——API 可达则语义化比对，
+                // 不可达（私有仓库/无网/限流）直接跳发布页由用户自行判断；
+                // 下载始终走系统浏览器（不在应用内下载 APK，规避未知来源安装权限）。
+                // 版本展示与检查动作合一（市面惯例）：右侧 trailing 为当前版本，点击即检查。
+                SettingRow(
+                    title = "检查更新",
+                    subtitle = if (checkingUpdate) "检查中..." else "检查新版本",
+                    trailing = { Text("v$versionName", color = PenText3) },
+                    onClick = {
+                        if (!checkingUpdate && activity != null) {
+                            scope.launch {
+                                checkingUpdate = true
+                                val rel = try {
+                                    UpdateChecker.fetchLatest()
+                                } catch (_: Exception) {
+                                    null
+                                }
+                                checkingUpdate = false
+                                when {
+                                    rel == null -> {
+                                        UpdateChecker.openInBrowser(activity)
+                                        showToast("已打开发布页，请自行比对最新版本")
+                                    }
+                                    UpdateChecker.isNewer(rel.tagName, versionName) -> newRelease = rel
+                                    else -> showToast("已是最新版本（v$versionName）")
+                                }
+                            }
+                        }
+                    },
+                )
             }
             Spacer(Modifier.height(16.dp))
             Text(
@@ -444,6 +484,36 @@ fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { autofillCompatDialog = false }) { Text("我知道了") }
+            },
+        )
+    }
+
+    // ---- 检查更新：发现新版 → 确认后跳浏览器前往发布页下载 ----
+    newRelease?.let { rel ->
+        AlertDialog(
+            onDismissRequest = { newRelease = null },
+            title = { Text("发现新版本 ${rel.tagName}") },
+            text = {
+                Text(
+                    "当前版本 v$versionName" +
+                        (rel.name?.takeIf { it.isNotBlank() }?.let { "\n\n$it" } ?: "") +
+                        "\n\n将打开浏览器前往发布页下载。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    activity?.let {
+                        UpdateChecker.openInBrowser(
+                            it,
+                            rel.htmlUrl.ifBlank { "https://github.com/beyondgjc/penly/releases/latest" },
+                        )
+                    }
+                    newRelease = null
+                }) { Text("前往下载") }
+            },
+            dismissButton = {
+                TextButton(onClick = { newRelease = null }) { Text("暂不") }
             },
         )
     }
