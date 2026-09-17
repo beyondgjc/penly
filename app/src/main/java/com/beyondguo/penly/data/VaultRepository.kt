@@ -101,17 +101,6 @@ class VaultRepository(private val store: VaultStore) {
         val now = System.currentTimeMillis()
         val createdAt = legacy.first.createdAt.takeIf { it > 0 } ?: now
 
-        store.writeMeta(
-            real,
-            legacy.first.copy(
-                schemaVersion = VaultMeta.SCHEMA_V2,
-                auxSaltB64 = "",
-                auxSecretEnc = "",
-                auxSecretIv = "",
-            ),
-        )
-        store.writeItems(real, legacy.second)
-
         val peerPassword = CryptoEngine.randomHex(32)
         val peerSaltB64 = CryptoEngine.randomSaltB64()
         val peerKey = CryptoEngine.deriveKeyB64(peerPassword, peerSaltB64)
@@ -119,20 +108,35 @@ class VaultRepository(private val store: VaultStore) {
         val peerItems = encryptEntries(ShadowVaultGenerator.generate(legacy.second), peerKey)
         peerKey.fill(0)
 
-        store.writeItems(peer, peerItems)
-        store.writeMeta(
-            peer,
-            VaultMeta(
-                saltB64 = peerSaltB64,
-                verifyB64 = peerVerify,
-                verifyIvB64 = peerVerifyIv,
-                pwdMode = legacy.first.pwdMode,
-                createdAt = createdAt,
-                updatedAt = createdAt,
-                schemaVersion = VaultMeta.SCHEMA_V2,
-            ),
-        )
-        store.clearLegacy()
+        // 双槽位原子提交：v1 数据搬运、占位影子建立与 legacy 清除在**同一次** edit
+        // 事务内生效——中途死进程不会留下「legacy 已删、v2 未写全」的半迁移状态
+        // （那会导致老用户数据看起来凭空消失）。
+        store.commitSlots {
+            write(
+                real,
+                meta = legacy.first.copy(
+                    schemaVersion = VaultMeta.SCHEMA_V2,
+                    auxSaltB64 = "",
+                    auxSecretEnc = "",
+                    auxSecretIv = "",
+                ),
+                items = legacy.second,
+            )
+            write(
+                peer,
+                meta = VaultMeta(
+                    saltB64 = peerSaltB64,
+                    verifyB64 = peerVerify,
+                    verifyIvB64 = peerVerifyIv,
+                    pwdMode = legacy.first.pwdMode,
+                    createdAt = createdAt,
+                    updatedAt = createdAt,
+                    schemaVersion = VaultMeta.SCHEMA_V2,
+                ),
+                items = peerItems,
+            )
+            dropLegacy()
+        }
     }
 
     /**
@@ -145,8 +149,6 @@ class VaultRepository(private val store: VaultStore) {
      */
     suspend fun initVault(master: String, mode: String) {
         require(master.length >= CryptoEngine.MASTER_MIN_LEN) { "主密码至少 ${CryptoEngine.MASTER_MIN_LEN} 位" }
-
-        store.clearAll() // 清掉可能的 legacy 残留，保证两个槽位从零开始同生同构
 
         val real = Slot.random()
         val peer = real.other()
@@ -167,39 +169,40 @@ class VaultRepository(private val store: VaultStore) {
         val auxPeer = CryptoEngine.aesEncrypt(CryptoEngine.randomHex(32), peerKey) // 诱饵
         peerKey.fill(0)
 
-        store.writeMeta(
-            real,
-            VaultMeta(
-                saltB64 = realSaltB64,
-                verifyB64 = realVerify,
-                verifyIvB64 = realVerifyIv,
-                pwdMode = mode,
-                createdAt = now,
-                updatedAt = now,
-                schemaVersion = VaultMeta.SCHEMA_V2,
-                auxSaltB64 = peerSaltB64,
-                auxSecretEnc = auxReal.dataB64,
-                auxSecretIv = auxReal.ivB64,
-            ),
+        val realMeta = VaultMeta(
+            saltB64 = realSaltB64,
+            verifyB64 = realVerify,
+            verifyIvB64 = realVerifyIv,
+            pwdMode = mode,
+            createdAt = now,
+            updatedAt = now,
+            schemaVersion = VaultMeta.SCHEMA_V2,
+            auxSaltB64 = peerSaltB64,
+            auxSecretEnc = auxReal.dataB64,
+            auxSecretIv = auxReal.ivB64,
         )
-        store.writeItems(real, emptyList())
+        val peerMeta = VaultMeta(
+            saltB64 = peerSaltB64,
+            verifyB64 = peerVerify,
+            verifyIvB64 = peerVerifyIv,
+            pwdMode = mode,
+            createdAt = now, // 与真库槽位同值：不允许"更早的是真库"成为规律
+            updatedAt = now,
+            schemaVersion = VaultMeta.SCHEMA_V2,
+            auxSaltB64 = realSaltB64,
+            auxSecretEnc = auxPeer.dataB64,
+            auxSecretIv = auxPeer.ivB64,
+        )
 
-        store.writeMeta(
-            peer,
-            VaultMeta(
-                saltB64 = peerSaltB64,
-                verifyB64 = peerVerify,
-                verifyIvB64 = peerVerifyIv,
-                pwdMode = mode,
-                createdAt = now, // 与真库槽位同值：不允许"更早的是真库"成为规律
-                updatedAt = now,
-                schemaVersion = VaultMeta.SCHEMA_V2,
-                auxSaltB64 = realSaltB64,
-                auxSecretEnc = auxPeer.dataB64,
-                auxSecretIv = auxPeer.ivB64,
-            ),
-        )
-        store.writeItems(peer, peerItems)
+        // 双槽位原子提交：清场（含 legacy 残留）与四个 key 的写入在**同一次** edit
+        // 事务内生效——中途进程死亡只会留下「全部旧值」或「全部新值」，不存在
+        // 「真库已写、影子未建」的半初始化状态（P0 失效窗口②的根治）。
+        store.commitSlots {
+            resetAll() // 清掉可能的残留，保证两个槽位从零开始同生同构
+            dropLegacy()
+            write(real, meta = realMeta, items = emptyList())
+            write(peer, meta = peerMeta, items = peerItems)
+        }
 
         SessionManager.establish(realKey, real)
     }
@@ -447,32 +450,37 @@ class VaultRepository(private val store: VaultStore) {
         val auxPeer = CryptoEngine.aesEncrypt(CryptoEngine.randomHex(32), newKey) // 诱饵
         val now = System.currentTimeMillis()
 
-        store.writeItems(peer, shadowItems)
-        store.writeMeta(
-            peer,
-            VaultMeta(
-                saltB64 = newSaltB64,
-                verifyB64 = newVerify,
-                verifyIvB64 = newVerifyIv,
-                pwdMode = m.pwdMode, // 与主槽位保持一致，避免影子库停留在旧模式
-                createdAt = oldPeerMeta?.createdAt ?: now, // 保持：假装它一直存在
-                updatedAt = oldPeerMeta?.updatedAt ?: now, // 冻结：设应急密码不得在磁盘留时间戳痕迹（否则 updatedAt>createdAt 即暴露"已设应急"）
-                schemaVersion = VaultMeta.SCHEMA_V2,
-                auxSaltB64 = m.saltB64,
-                auxSecretEnc = auxPeer.dataB64,
-                auxSecretIv = auxPeer.ivB64,
-            ),
-        )
-
         val auxReal = CryptoEngine.aesEncrypt(duress, key)
-        store.writeMeta(
-            slot,
-            m.copy(
-                auxSaltB64 = newSaltB64,
-                auxSecretEnc = auxReal.dataB64,
-                auxSecretIv = auxReal.ivB64,
-            ),
-        )
+
+        // 双槽位原子提交：影子重建（items+meta）与真库 aux 凭证写入在**同一次** edit
+        // 事务内生效——中途死进程不会留下「影子已重建、真库 aux 仍指旧 salt」的
+        // 断链半状态（P0 失效窗口②的根治，链断即静默门禁自锁）。
+        store.commitSlots {
+            write(
+                peer,
+                meta = VaultMeta(
+                    saltB64 = newSaltB64,
+                    verifyB64 = newVerify,
+                    verifyIvB64 = newVerifyIv,
+                    pwdMode = m.pwdMode, // 与主槽位保持一致，避免影子库停留在旧模式
+                    createdAt = oldPeerMeta?.createdAt ?: now, // 保持：假装它一直存在
+                    updatedAt = oldPeerMeta?.updatedAt ?: now, // 冻结：设应急密码不得在磁盘留时间戳痕迹（否则 updatedAt>createdAt 即暴露"已设应急"）
+                    schemaVersion = VaultMeta.SCHEMA_V2,
+                    auxSaltB64 = m.saltB64,
+                    auxSecretEnc = auxPeer.dataB64,
+                    auxSecretIv = auxPeer.ivB64,
+                ),
+                items = shadowItems,
+            )
+            write(
+                slot,
+                meta = m.copy(
+                    auxSaltB64 = newSaltB64,
+                    auxSecretEnc = auxReal.dataB64,
+                    auxSecretIv = auxReal.ivB64,
+                ),
+            )
+        }
         newKey.fill(0)
         return null
     }
@@ -515,33 +523,38 @@ class VaultRepository(private val store: VaultStore) {
         val peerItems = encryptEntries(ShadowVaultGenerator.generate(store.readItems(slot)), peerKey)
         val auxPeer = CryptoEngine.aesEncrypt(CryptoEngine.randomHex(32), peerKey) // 诱饵
         peerKey.fill(0)
-
-        store.writeItems(peer, peerItems)
-        store.writeMeta(
-            peer,
-            VaultMeta(
-                saltB64 = peerSaltB64,
-                verifyB64 = peerVerify,
-                verifyIvB64 = peerVerifyIv,
-                pwdMode = m.pwdMode,
-                createdAt = createdAt,
-                updatedAt = createdAt,
-                schemaVersion = VaultMeta.SCHEMA_V2,
-                auxSaltB64 = m.saltB64,
-                auxSecretEnc = auxPeer.dataB64,
-                auxSecretIv = auxPeer.ivB64,
-            ),
-        )
         val auxReal = CryptoEngine.aesEncrypt(peerPassword, key)
-        store.writeMeta(
-            slot,
-            m.copy(
-                schemaVersion = VaultMeta.SCHEMA_V2,
-                auxSaltB64 = peerSaltB64,
-                auxSecretEnc = auxReal.dataB64,
-                auxSecretIv = auxReal.ivB64,
-            ),
-        )
+
+        // 双槽位原子提交：占位影子建立（items+meta）与真库 aux 凭证写入在**同一次**
+        // edit 事务内生效。原实现靠 commit-last 自愈（auxSecretEnc 最后写、空则下轮
+        // 重跑），原子化后无中途态，自愈语义自然升级为「全或无」。
+        store.commitSlots {
+            write(
+                peer,
+                meta = VaultMeta(
+                    saltB64 = peerSaltB64,
+                    verifyB64 = peerVerify,
+                    verifyIvB64 = peerVerifyIv,
+                    pwdMode = m.pwdMode,
+                    createdAt = createdAt,
+                    updatedAt = createdAt,
+                    schemaVersion = VaultMeta.SCHEMA_V2,
+                    auxSaltB64 = m.saltB64,
+                    auxSecretEnc = auxPeer.dataB64,
+                    auxSecretIv = auxPeer.ivB64,
+                ),
+                items = peerItems,
+            )
+            write(
+                slot,
+                meta = m.copy(
+                    schemaVersion = VaultMeta.SCHEMA_V2,
+                    auxSaltB64 = peerSaltB64,
+                    auxSecretEnc = auxReal.dataB64,
+                    auxSecretIv = auxReal.ivB64,
+                ),
+            )
+        }
     }
 
     private fun readAuxSecret(meta: VaultMeta, key: ByteArray): String? {
@@ -750,40 +763,40 @@ class VaultRepository(private val store: VaultStore) {
      * 设置/修改主密码：旧密钥解密全部记录 → 新密钥重加密 → 更新 meta（新 salt + 新校验串）。
      * 只作用于**当前槽位**；aux 秘密用新密钥重新加密，保证影子数据仍可自动同步。
      */
-    suspend fun changeMasterPassword(oldPlain: String?, newPlain: String): String? {
-        if (!isPrimaryCached()) return null // 影子会话静默 noop：既不破坏主↔影关联，也不暴露当前是影子库
-        if (newPlain.length < CryptoEngine.MASTER_MIN_LEN) {
-            return "主密码至少 ${CryptoEngine.MASTER_MIN_LEN} 位"
-        }
-        val slot = SessionManager.activeSlotOrNull() ?: return "印迹未解锁"
-        val m = store.readMeta(slot) ?: return "印迹尚未初始化"
-        val peer = slot.other()
-        val oldMaster = oldPlain ?: CryptoEngine.ANDROID_DEFAULT_MASTER
-        val oldKey = CryptoEngine.deriveKeyB64(oldMaster, m.saltB64)
-        if (!CryptoEngine.verifyMaster(oldKey, m.verifyB64, m.verifyIvB64)) {
-            oldKey.fill(0)
-            return "旧主密码错误"
-        }
-        val auxSecret = readAuxSecret(m, oldKey)
-        // 新主密码不得与应急密码相同，理由同上：两槽位同密码会让解锁槽位不可判。
-        // 未设置应急密码时 auxSecret 是无人知晓的随机密码，不可能与用户输入相等。
-        if (auxSecret != null && auxSecret == newPlain) {
-            oldKey.fill(0)
-            return "主密码不能与应急密码相同"
-        }
+    suspend fun changeMasterPassword(oldPlain: String?, newPlain: String): String? =
+        withContext(Dispatchers.Default) {
+            // 整体移出 Main：PBKDF2×2（各 10 万次迭代）+ 全量条目重加密 + JSON 编码
+            // 都是 CPU 密集工作，评审定案随原子写一并归位（原先整段跑在调用方上下文）
+            if (!isPrimaryCached()) return@withContext null // 影子会话静默 noop：既不破坏主↔影关联，也不暴露当前是影子库
+            if (newPlain.length < CryptoEngine.MASTER_MIN_LEN) {
+                return@withContext "主密码至少 ${CryptoEngine.MASTER_MIN_LEN} 位"
+            }
+            val slot = SessionManager.activeSlotOrNull() ?: return@withContext "印迹未解锁"
+            val m = store.readMeta(slot) ?: return@withContext "印迹尚未初始化"
+            val peer = slot.other()
+            val oldMaster = oldPlain ?: CryptoEngine.ANDROID_DEFAULT_MASTER
+            val oldKey = CryptoEngine.deriveKeyB64(oldMaster, m.saltB64)
+            if (!CryptoEngine.verifyMaster(oldKey, m.verifyB64, m.verifyIvB64)) {
+                oldKey.fill(0)
+                return@withContext "旧主密码错误"
+            }
+            val auxSecret = readAuxSecret(m, oldKey)
+            // 新主密码不得与应急密码相同，理由同上：两槽位同密码会让解锁槽位不可判。
+            // 未设置应急密码时 auxSecret 是无人知晓的随机密码，不可能与用户输入相等。
+            if (auxSecret != null && auxSecret == newPlain) {
+                oldKey.fill(0)
+                return@withContext "主密码不能与应急密码相同"
+            }
 
-        val newSaltB64 = CryptoEngine.randomSaltB64()
-        val newKey = CryptoEngine.deriveKeyB64(newPlain, newSaltB64)
-        val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(newKey)
-        val reEnc = reEncryptItems(store.readItems(slot), oldKey, newKey)
-        oldKey.fill(0)
-        val ts = System.currentTimeMillis()
+            val newSaltB64 = CryptoEngine.randomSaltB64()
+            val newKey = CryptoEngine.deriveKeyB64(newPlain, newSaltB64)
+            val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(newKey)
+            val reEnc = reEncryptItems(store.readItems(slot), oldKey, newKey)
+            oldKey.fill(0)
+            val ts = System.currentTimeMillis()
 
-        val auxEnc = auxSecret?.let { CryptoEngine.aesEncrypt(it, newKey) }
-        store.writeItems(slot, reEnc)
-        store.writeMeta(
-            slot,
-            m.copy(
+            val auxEnc = auxSecret?.let { CryptoEngine.aesEncrypt(it, newKey) }
+            val slotMeta = m.copy(
                 saltB64 = newSaltB64,
                 verifyB64 = newVerify,
                 verifyIvB64 = newVerifyIv,
@@ -791,17 +804,26 @@ class VaultRepository(private val store: VaultStore) {
                 updatedAt = ts,
                 auxSecretEnc = auxEnc?.dataB64 ?: m.auxSecretEnc,
                 auxSecretIv = auxEnc?.ivB64 ?: m.auxSecretIv,
-            ),
-        )
-        // 同步对端 meta 的 pwdMode / updatedAt，使两槽位明文结构保持对称。
-        // 否则 changeMaster 后 real.pwdMode=CUSTOM 而 peer 停在旧模式，两槽位明文
-        // 不对称会泄露双槽位设计，破坏 §3.4 不可证伪性。
-        store.readMeta(peer)?.let { pm ->
-            store.writeMeta(peer, pm.copy(pwdMode = VaultMeta.MODE_CUSTOM, updatedAt = ts))
+            )
+            // 同步对端 meta 的 pwdMode / updatedAt，使两槽位明文结构保持对称。
+            // 否则 changeMaster 后 real.pwdMode=CUSTOM 而 peer 停在旧模式，两槽位明文
+            // 不对称会泄露双槽位设计，破坏 §3.4 不可证伪性。
+            val peerMeta = store.readMeta(peer)?.copy(
+                pwdMode = VaultMeta.MODE_CUSTOM,
+                updatedAt = ts,
+            )
+
+            // 双槽位原子提交：items 重加密结果、本槽位新 meta（新 salt+新校验串）与
+            // 对端 meta 同步在**同一次** edit 事务内生效——中途死进程不会留下
+            // 「items 已重加密而 meta（新 salt）未写」的半状态：那会让唯一可用的
+            // 密码永久失效、全部数据不可解密（P0 失效窗口①的根治）。
+            store.commitSlots {
+                write(slot, meta = slotMeta, items = reEnc)
+                peerMeta?.let { write(peer, meta = it) }
+            }
+            SessionManager.establish(newKey, slot) // 槽位不变
+            return@withContext null
         }
-        SessionManager.establish(newKey, slot) // 槽位不变
-        return null
-    }
 
     /**
      * 导入前预检：验证备份密码，确保「解得开才导入」（见 [BackupCodec.verifyPassword]）。
@@ -922,19 +944,6 @@ class VaultRepository(private val store: VaultStore) {
         val now = System.currentTimeMillis()
         val createdAt = realMetaSource.createdAt.takeIf { it > 0 } ?: now
 
-        store.clearAll()
-        store.writeMeta(
-            real,
-            realMetaSource.copy(
-                schemaVersion = VaultMeta.SCHEMA_V2,
-                createdAt = createdAt,
-                auxSaltB64 = "",
-                auxSecretEnc = "",
-                auxSecretIv = "",
-            ),
-        )
-        store.writeItems(real, realItems)
-
         val peerPassword = CryptoEngine.randomHex(32)
         val peerSaltB64 = CryptoEngine.randomSaltB64()
         val peerKey = CryptoEngine.deriveKeyB64(peerPassword, peerSaltB64)
@@ -942,19 +951,36 @@ class VaultRepository(private val store: VaultStore) {
         val peerItems = encryptEntries(ShadowVaultGenerator.generate(realItems), peerKey)
         peerKey.fill(0)
 
-        store.writeItems(peer, peerItems)
-        store.writeMeta(
-            peer,
-            VaultMeta(
-                saltB64 = peerSaltB64,
-                verifyB64 = peerVerify,
-                verifyIvB64 = peerVerifyIv,
-                pwdMode = realMetaSource.pwdMode,
-                createdAt = createdAt, // 与真库槽位同值
-                updatedAt = createdAt,
-                schemaVersion = VaultMeta.SCHEMA_V2,
-            ),
-        )
+        // 双槽位原子提交：clearAll（覆盖语义）与双槽位四 key 的重建在**同一次** edit
+        // 事务内生效——中途死进程不会留下「旧世界已清、新世界未写全」的半导入状态
+        // （那会让用户以为备份损坏或数据丢失）。
+        store.commitSlots {
+            resetAll()
+            write(
+                real,
+                meta = realMetaSource.copy(
+                    schemaVersion = VaultMeta.SCHEMA_V2,
+                    createdAt = createdAt,
+                    auxSaltB64 = "",
+                    auxSecretEnc = "",
+                    auxSecretIv = "",
+                ),
+                items = realItems,
+            )
+            write(
+                peer,
+                meta = VaultMeta(
+                    saltB64 = peerSaltB64,
+                    verifyB64 = peerVerify,
+                    verifyIvB64 = peerVerifyIv,
+                    pwdMode = realMetaSource.pwdMode,
+                    createdAt = createdAt, // 与真库槽位同值
+                    updatedAt = createdAt,
+                    schemaVersion = VaultMeta.SCHEMA_V2,
+                ),
+                items = peerItems,
+            )
+        }
     }
 
     // ---------------- 工具 ----------------

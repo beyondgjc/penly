@@ -122,4 +122,89 @@ class VaultStore(private val context: Context) {
             p.remove(LEGACY_ITEMS_KEY)
         }
     }
+
+    // ---------------- 双槽位原子提交（P0：跨 key 多写必须单事务） ----------------
+    //
+    // 背景见《评审_VaultRepository多key非原子写入》：initVault / rebuildBothSlots /
+    // setDuressPassword / changeMasterPassword / ensureAuxProvisioned / migrateIfNeeded
+    // 都要跨多个 key 写入，原先各自一次 edit{}——中途进程死亡会留下「半状态」：
+    // ① changeMasterPassword items 写完 meta 未写 → 唯一可用密码失效，数据永久不可解密；
+    // ② setDuressPassword / initVault 落在 aux 链断裂处 → isPrimary 恒 false，静默门禁自锁。
+    //
+    // DataStore 的 edit{} 本身是原子事务（CAS 单文件写）——把多 key 变更合并进**一次**
+    // edit{} 即获得全或无语义。链路不变量 I（真库 key 解出对侧密码、对侧 verify 通过）
+    // 与「合法影子槽位」在磁盘上不可区分，任何事后检测自愈都不可行，只能靠原子写。
+
+    /**
+     * 槽位写入载荷：JSON 已序列化的 meta / items。
+     * null 表示**不改动**该 key（非删除）；单槽位至少要写一项。
+     */
+    class SlotWrite internal constructor(
+        internal val metaJson: String?,
+        internal val itemsJson: String?,
+    )
+
+    /**
+     * 双槽位事务的声明集。[write] / [resetAll] / [dropLegacy] 只做**声明与 JSON 编码**，
+     * 真正的磁盘变更由 [VaultStore.commitSlots] 在**一次** edit{} 内统一生效。
+     *
+     * ⚠️ 编码必须发生在 edit 事务之外（commitSlots 先跑本 builder 拿到全部载荷，
+     * 再进事务只做赋值）：transform 持有 DataStore coordinator 锁，全量条目的
+     * 序列化是 CPU 工作，放进事务会无谓拖长锁持有时间。
+     */
+    class SlotPatchBuilder internal constructor(private val json: Json) {
+        internal val writes = LinkedHashMap<Slot, SlotWrite>()
+        internal var resetAllFlag = false
+        internal var dropLegacyFlag = false
+
+        /** 写一个槽位：meta / items 至少给一个；同槽位重复 write 直接拒绝（防部分声明被静默覆盖） */
+        fun write(slot: Slot, meta: VaultMeta? = null, items: List<VaultItem>? = null) {
+            require(meta != null || items != null) { "write(${slot.name}) 的 meta 与 items 不能同时为空" }
+            require(slot !in writes) {
+                "槽位 ${slot.name} 已声明写入：重复 write 会整体覆盖先前声明" +
+                    "（第二次只给 meta 会静默丢掉已声明的 items）——如需组合请一次给全"
+            }
+            val metaJson = meta?.let { json.encodeToString(VaultMeta.serializer(), it) }
+            val itemsJson = items?.let { json.encodeToString(ListSerializer(VaultItem.serializer()), it) }
+            writes[slot] = SlotWrite(metaJson, itemsJson)
+        }
+
+        /** 同事务先移除全部双槽位四 key（初始化/导入的「从零重建」语义） */
+        fun resetAll() {
+            resetAllFlag = true
+        }
+
+        /** 同事务移除 legacy key（v1 → v2 迁移的收尾步） */
+        fun dropLegacy() {
+            dropLegacyFlag = true
+        }
+    }
+
+    /**
+     * 双槽位原子提交：[patch] 内声明的全部变更在**一次** edit{} 事务内生效——
+     * 中途进程死亡只会留下「全部旧值」或「全部新值」，不存在半状态。
+     * [SlotPatchBuilder] 内的 JSON 编码在事务外（调用方 dispatcher）完成。
+     */
+    suspend fun commitSlots(patch: SlotPatchBuilder.() -> Unit) {
+        val p = SlotPatchBuilder(json).apply(patch)
+        require(p.writes.isNotEmpty() || p.resetAllFlag || p.dropLegacyFlag) {
+            "空事务：commitSlots 不允许无操作提交"
+        }
+        context.penlyDataStore.edit { prefs ->
+            if (p.resetAllFlag) {
+                prefs.remove(metaKey(Slot.A))
+                prefs.remove(itemsKey(Slot.A))
+                prefs.remove(metaKey(Slot.B))
+                prefs.remove(itemsKey(Slot.B))
+            }
+            p.writes.forEach { (slot, w) ->
+                w.metaJson?.let { prefs[metaKey(slot)] = it }
+                w.itemsJson?.let { prefs[itemsKey(slot)] = it }
+            }
+            if (p.dropLegacyFlag) {
+                prefs.remove(LEGACY_META_KEY)
+                prefs.remove(LEGACY_ITEMS_KEY)
+            }
+        }
+    }
 }
