@@ -108,17 +108,27 @@ fun SettingsScreen(
     val autofillManager = context.getSystemService(android.view.autofill.AutofillManager::class.java)
     var autofillEnabled by remember { mutableStateOf(autofillManager?.hasEnabledAutofillServices() == true) }
     var autofillCompatDialog by remember { mutableStateOf(false) }
-    // MIUI「后台弹出界面」权限（v4.0）：其他应用唤起 autofill 时印迹需在后台弹窗，
-    // MIUI 有独立拦截开关（op 10008），未允许时弹窗被静默吞掉。仅 MIUI 显示引导；
-    // 状态与 autofill 开关同款：ON_RESUME 刷新 + remember 初值现查兜底。
+    // MIUI「后台弹出界面」两步引导（v4.0）：其他应用唤起 autofill 时印迹需在后台
+    // 弹窗，MIUI 有独立拦截开关（op 10008），未允许时弹窗被静默吞掉。仅 MIUI 有此
+    // 开关；权限状态不做本地检测（各版本 ROM 对该 op 的语义不一致，用户拍板去掉）
+    // ——纯引导：第一步系统授权页返回且确认授权成功后，自动进入第二步跳权限页。
     val showBgUiGuide = remember { MiuiBgUi.isMiui() }
-    var bgUiAllowed by remember { mutableStateOf(MiuiBgUi.isAllowed(context)) }
+    var awaitBgUiStep by remember { mutableStateOf(false) }
     DisposableEffect(activity?.lifecycle, autofillManager) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 autofillEnabled = autofillManager?.hasEnabledAutofillServices() == true
-                if (showBgUiGuide) {
-                    bgUiAllowed = MiuiBgUi.isAllowed(context)
+                if (awaitBgUiStep) {
+                    awaitBgUiStep = false // 消费一次：无论授权与否都不重复引导
+                    if (autofillEnabled && showBgUiGuide && activity != null) {
+                        MiuiBgUi.openPermissionPage(activity)
+                        // 此处位于 showToast 局部函数定义之前，直接走 android.widget.Toast
+                        android.widget.Toast.makeText(
+                            context,
+                            "第二步：请允许「后台弹出界面」，否则填充解锁界面无法弹出",
+                            android.widget.Toast.LENGTH_LONG,
+                        ).show()
+                    }
                 }
             }
         }
@@ -290,8 +300,11 @@ fun SettingsScreen(
                 // 关 = disableAutofillServices() 立即解绑（系统 API，无需二次确认）
                 SettingRow(
                     title = "系统自动填充",
-                    subtitle = if (autofillEnabled) "已启用：登录页自动填充账号密码"
-                    else "未启用：打开后需在系统弹窗中确认",
+                    subtitle = when {
+                        autofillEnabled -> "已启用：登录页自动填充账号密码"
+                        showBgUiGuide -> "未启用：两步开启——系统授权 + 后台弹出界面"
+                        else -> "未启用：打开后需在系统弹窗中确认"
+                    },
                     trailing = {
                         Switch(
                             checked = autofillEnabled,
@@ -304,6 +317,9 @@ fun SettingsScreen(
                                                 android.net.Uri.parse("package:${context.packageName}"),
                                             ),
                                         )
+                                    }.onSuccess {
+                                        // 第一步（系统授权）已发起：授权页返回确认后自动进第二步
+                                        awaitBgUiStep = showBgUiGuide
                                     }.onFailure { showToast("请到 系统设置 → 密码与账户 → 自动填充服务 手动选择印迹") }
                                 } else {
                                     autofillManager?.disableAutofillServices()
@@ -313,21 +329,6 @@ fun SettingsScreen(
                         )
                     },
                 )
-                // MIUI「后台弹出界面」引导（v4.0）：其他应用唤起 autofill 时印迹要在
-                // 后台弹窗，MIUI 未允许会静默吞掉弹窗。仅 MIUI 显示；状态 ON_RESUME 刷新。
-                if (showBgUiGuide) {
-                    SettingRow(
-                        title = "后台弹出界面",
-                        subtitle = if (bgUiAllowed) {
-                            "已允许：其他应用唤起填充不受限"
-                        } else {
-                            "未允许：填充解锁界面会被系统拦截，点击去开启"
-                        },
-                        onClick = {
-                            if (activity != null) showToast(MiuiBgUi.openPermissionPage(activity))
-                        },
-                    )
-                }
                 // 入口刻意中性、无状态标记、无强调样式：
                 // 任何"已开启"提示都会让旁人一眼看出存在第二套数据
                 SettingRow(
@@ -389,11 +390,7 @@ fun SettingsScreen(
                 SettingRow(title = "加密说明", onClick = { showAbout = true })
                 // 兼容范围说明：管理用户预期——填充/保存依赖系统 autofill 协议，
                 // 自绘输入框（游戏/自建账号页）与 Compose、Flutter 界面收不到系统请求
-                SettingRow(
-                    title = "自动填充兼容范围",
-                    subtitle = "哪些 App 能填充/保存，哪些不行",
-                    onClick = { autofillCompatDialog = true },
-                )
+                SettingRow(title = "自动填充兼容范围", onClick = { autofillCompatDialog = true })
                 SettingRow(title = "版本", trailing = { Text("2.0.0", color = PenText3) })
             }
             Spacer(Modifier.height(16.dp))
