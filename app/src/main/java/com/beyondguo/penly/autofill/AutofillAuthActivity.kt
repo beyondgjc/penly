@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.beyondguo.penly.bio.BioManager
 import com.beyondguo.penly.penly
+import com.beyondguo.penly.util.AppNameResolver
 import com.beyondguo.penly.ui.theme.PenlyTheme
 import kotlinx.coroutines.launch
 
@@ -142,7 +143,8 @@ class AutofillAuthActivity : FragmentActivity() {
                             val saved = try {
                                 repo.saveEntry(
                                     id = null,
-                                    title = saveTitle,
+                                    // v4.0：标题用应用显示名（解不出回包名兜底）；appPackage 仍存包名
+                                    title = AppNameResolver.label(applicationContext, saveTitle) ?: saveTitle,
                                     category = "",
                                     account = saveAccount,
                                     secret = saveSecret,

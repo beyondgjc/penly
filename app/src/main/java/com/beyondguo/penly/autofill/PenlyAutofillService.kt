@@ -13,6 +13,7 @@ import android.service.autofill.SaveRequest
 import android.view.autofill.AutofillManager
 import com.beyondguo.penly.autofill.AutofillResponseBuilder.buildFillResponse
 import com.beyondguo.penly.penly
+import com.beyondguo.penly.util.AppNameResolver
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -25,7 +26,7 @@ import kotlinx.coroutines.runBlocking
  *    未命中不弹填充提示，含密码字段的表单回「保存锚定占位」（提交后触发保存）
  *
  * onSaveRequest：用户在系统保存弹窗点「保存」→ 取表单提交值入库。
- *  - 会话已解锁：直接 saveEntry（记录来源包名）
+ *  - 会话已解锁：直接 saveEntry（记录来源包名；标题用应用显示名 [AppNameResolver]，解不出回包名）
  *  - 会话已锁定：onSuccess(intentSender) 拉起解锁浮层，验证后在浮层内保存
  *
  * onSavedRequest 不做包名校验白名单——Android 系统已保证请求来自真实前台应用。
@@ -120,7 +121,8 @@ class PenlyAutofillService : AutofillService() {
                 runBlocking {
                     repo.saveEntry(
                         id = null,
-                        title = form.packageName,
+                        // v4.0：标题用应用显示名（解不出回包名兜底）；appPackage 仍存包名
+                        title = AppNameResolver.label(applicationContext, form.packageName) ?: form.packageName,
                         category = "",
                         account = form.usernameValue ?: "",
                         secret = form.passwordValue ?: "",

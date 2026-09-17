@@ -52,11 +52,12 @@ object AutofillResponseBuilder {
         }
 
     /**
-     * 构建"已解锁"填充响应：匹配条目（来源包名优先，无来源则全量）逐条出数据集。
+     * 构建"已解锁"填充响应：只出「来源=当前应用」的条目数据集。
      *
      * @param matchedIds 非空 = 解锁浮层路径：只填充锁定态匹配索引命中的条目
-     *   （用户预期：存过才提示，指纹验证后直接填充匹配项）；null = 会话已解锁的直连路径，
-     *   按来源包名匹配、无匹配退全量。
+     *   （指纹验证后直接填充匹配项）；null = 会话已解锁的直连路径，按来源包名严格匹配。
+     *   两条路径同语义：**存过才提示**——无匹配不弹任何卡片（save-only 锚定，
+     *   用户手输提交后系统才弹「保存到印迹」）。
      *
      * **关键语义：即使没有可填充的数据集，也返回带 SaveInfo 的响应**——
      * 系统只把「保存」请求发给认领过表单的服务。返回 null 仅限结构异常。
@@ -68,9 +69,13 @@ object AutofillResponseBuilder {
         matchedIds: List<String>? = null,
     ): FillResponse? {
         val all = repo.items()
+        // v4.0：移除旧版「无匹配退全量」兜底（ifEmpty { all }）——它会让无关 App
+        // （如 AutoFillTest）聚焦登录框就弹出不相关条目（实证：弹「腾讯」），
+        // 观感=乱匹配。与锁定路径统一：严格按来源包名匹配，存过才提示；
+        // 无匹配 → 零数据集 + SaveInfo（save-only），提交后系统弹保存。
         val candidates: List<com.beyondguo.penly.data.VaultItem> = when {
             matchedIds != null -> all.filter { it.id in matchedIds } // 锁定态已按包名匹配过
-            else -> all.filter { it.appPackage == form.packageName }.ifEmpty { all }
+            else -> all.filter { it.appPackage == form.packageName }
         }
         android.util.Log.d(
             "PenlyAutofill",
