@@ -136,7 +136,8 @@ class PenlyAutofillService : AutofillService() {
         // onSuccess(intentSender) 官方通道直接拉浮层（AutofillAuthActivity SAVE 模式），
         // 验证指纹/主密码后表单账密直接入库。前提：MIUI「后台弹出界面」权限
         // （MIUIOP 10008）开启——被拒时静默吞掉无回调（曾用通知兜底，用户拍板移除，
-        // 依赖引导用户开权限，见 docs/autofill.md 2.4/4.4）。
+        // 依赖引导用户开权限，见 docs/autofill.md 2.4/4.4；v4.0 起设置页有引导
+        // 入口：util/MiuiBgUi 检测 + 跳转，状态 ON_RESUME 刷新）。
         // 表单值经浮层 Intent 内存传递，用后即弃不落盘。
         android.util.Log.d("PenlyAutofill", "onSaveRequest: locked -> direct-launch save overlay")
         val intent = android.content.Intent(this, AutofillAuthActivity::class.java).apply {

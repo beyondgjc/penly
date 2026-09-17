@@ -60,6 +60,7 @@ import com.beyondguo.penly.ui.components.SectionTitle
 import com.beyondguo.penly.ui.components.SettingCard
 import com.beyondguo.penly.ui.components.SettingRow
 import com.beyondguo.penly.util.ClipboardGuard
+import com.beyondguo.penly.util.MiuiBgUi
 import com.beyondguo.penly.ui.theme.PenDanger
 import com.beyondguo.penly.ui.theme.PenGreen
 import com.beyondguo.penly.ui.theme.PenText3
@@ -107,10 +108,18 @@ fun SettingsScreen(
     val autofillManager = context.getSystemService(android.view.autofill.AutofillManager::class.java)
     var autofillEnabled by remember { mutableStateOf(autofillManager?.hasEnabledAutofillServices() == true) }
     var autofillCompatDialog by remember { mutableStateOf(false) }
+    // MIUI「后台弹出界面」权限（v4.0）：其他应用唤起 autofill 时印迹需在后台弹窗，
+    // MIUI 有独立拦截开关（op 10008），未允许时弹窗被静默吞掉。仅 MIUI 显示引导；
+    // 状态与 autofill 开关同款：ON_RESUME 刷新 + remember 初值现查兜底。
+    val showBgUiGuide = remember { MiuiBgUi.isMiui() }
+    var bgUiAllowed by remember { mutableStateOf(MiuiBgUi.isAllowed(context)) }
     DisposableEffect(activity?.lifecycle, autofillManager) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 autofillEnabled = autofillManager?.hasEnabledAutofillServices() == true
+                if (showBgUiGuide) {
+                    bgUiAllowed = MiuiBgUi.isAllowed(context)
+                }
             }
         }
         activity?.lifecycle?.addObserver(observer)
@@ -304,13 +313,21 @@ fun SettingsScreen(
                         )
                     },
                 )
-                // 兼容范围说明：管理用户预期——填充/保存依赖系统 autofill 协议，
-                // 自绘输入框（游戏/自建账号页）与 Compose、Flutter 界面收不到系统请求
-                SettingRow(
-                    title = "自动填充兼容范围",
-                    subtitle = "哪些 App 能填充/保存，哪些不行",
-                    onClick = { autofillCompatDialog = true },
-                )
+                // MIUI「后台弹出界面」引导（v4.0）：其他应用唤起 autofill 时印迹要在
+                // 后台弹窗，MIUI 未允许会静默吞掉弹窗。仅 MIUI 显示；状态 ON_RESUME 刷新。
+                if (showBgUiGuide) {
+                    SettingRow(
+                        title = "后台弹出界面",
+                        subtitle = if (bgUiAllowed) {
+                            "已允许：其他应用唤起填充不受限"
+                        } else {
+                            "未允许：填充解锁界面会被系统拦截，点击去开启"
+                        },
+                        onClick = {
+                            if (activity != null) showToast(MiuiBgUi.openPermissionPage(activity))
+                        },
+                    )
+                }
                 // 入口刻意中性、无状态标记、无强调样式：
                 // 任何"已开启"提示都会让旁人一眼看出存在第二套数据
                 SettingRow(
@@ -370,6 +387,13 @@ fun SettingsScreen(
             SectionTitle("关于")
             SettingCard {
                 SettingRow(title = "加密说明", onClick = { showAbout = true })
+                // 兼容范围说明：管理用户预期——填充/保存依赖系统 autofill 协议，
+                // 自绘输入框（游戏/自建账号页）与 Compose、Flutter 界面收不到系统请求
+                SettingRow(
+                    title = "自动填充兼容范围",
+                    subtitle = "哪些 App 能填充/保存，哪些不行",
+                    onClick = { autofillCompatDialog = true },
+                )
                 SettingRow(title = "版本", trailing = { Text("2.0.0", color = PenText3) })
             }
             Spacer(Modifier.height(16.dp))
