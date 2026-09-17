@@ -194,4 +194,89 @@ class TotpTest {
         }
         assertThrows(IllegalArgumentException::class.java) { Totp.generate(ByteArray(0), 59) }
     }
+
+    // ==================== 边界加固（v4.0） ====================
+
+    /** otpauth://hotp/ 是计数器型（RFC 4226），无 period 语义——当 TOTP 导入会生成永远错配的码 */
+    @Test
+    fun otpauth_hotp_link_rejected() {
+        assertThrows(IllegalArgumentException::class.java) {
+            Totp.parseInput("otpauth://hotp/x?secret=JBSWY3DPEHPK3PXP&counter=0")
+        }
+    }
+
+    /** 未知 type 段一并拒绝 */
+    @Test
+    fun otpauth_unknown_type_rejected() {
+        assertThrows(IllegalArgumentException::class.java) {
+            Totp.parseInput("otpauth://weird/x?secret=JBSWY3DPEHPK3PXP")
+        }
+    }
+
+    /**
+     * digits 参数「出现但越界」必须抛错而非静默回落默认 6——
+     * 回落会生成与网站参数不一致的码，且用户无从发现（与 algorithm 的 N1 教训同口径）
+     */
+    @Test
+    fun otpauth_digits_outOfRange_rejected_notSilentlyDefaulted() {
+        for (bad in listOf("0", "1", "5", "9", "12", "abc")) {
+            assertThrows("digits=$bad", IllegalArgumentException::class.java) {
+                Totp.parseInput("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&digits=$bad")
+            }
+        }
+    }
+
+    /** period 参数「出现但越界」同上：抛错不回落 */
+    @Test
+    fun otpauth_period_outOfRange_rejected_notSilentlyDefaulted() {
+        for (bad in listOf("0", "-30", "3601", "abc")) {
+            assertThrows("period=$bad", IllegalArgumentException::class.java) {
+                Totp.parseInput("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&period=$bad")
+            }
+        }
+    }
+
+    /** digits 写入域收紧为 RFC 6238 定义的 6-8 位（1-5/9+ 位的服务端不存在，接受只会算错） */
+    @Test
+    fun digits_domain_narrowed_to_6_8() {
+        assertThrows(IllegalArgumentException::class.java) { Totp.generate(rfcSecret, 59, digits = 5) }
+        assertThrows(IllegalArgumentException::class.java) { Totp.generate(rfcSecret, 59, digits = 9) }
+    }
+
+    /** 负时间戳（时钟异常）拒绝——负 counter 的编码行为未定义 */
+    @Test
+    fun generate_rejects_negative_time() {
+        assertThrows(IllegalArgumentException::class.java) { Totp.generate(rfcSecret, -1) }
+    }
+
+    /** 全 padding / 空串输入：解不出任何字节，必须拒绝而非返回空数组 */
+    @Test
+    fun base32Decode_emptyInput_rejected() {
+        assertThrows(IllegalArgumentException::class.java) { Totp.base32Decode("===") }
+        assertThrows(IllegalArgumentException::class.java) { Totp.base32Decode("") }
+        assertThrows(IllegalArgumentException::class.java) { Totp.base32Decode(" - ") }
+    }
+
+    /** 存量参数越界（历史脏数据，如旧版接受过的 digits=9）在编辑回存时回落默认 */
+    @Test
+    fun resolveEditParams_storedParams_outOfRange_falls_back() {
+        assertEquals(6, Totp.resolveEditParams("JBSWY3DPEHPK3PXP", 9, 30).digits)
+        assertEquals(6, Totp.resolveEditParams("JBSWY3DPEHPK3PXP", 5, 30).digits)
+        assertEquals(30, Totp.resolveEditParams("JBSWY3DPEHPK3PXP", 6, 0).period)
+        assertEquals(30, Totp.resolveEditParams("JBSWY3DPEHPK3PXP", 6, 7200).period)
+    }
+
+    /** secret 参数存在但为空（&secret=）与缺失（无参数）同罪 */
+    @Test
+    fun otpauth_emptySecret_rejected() {
+        assertThrows(IllegalArgumentException::class.java) {
+            Totp.parseInput("otpauth://totp/x?secret=&issuer=GitHub")
+        }
+    }
+
+    /** 7 位（RFC 允许的中间形态）：RFC 向量 S=94287082 → mod 10^7 = 4287082 */
+    @Test
+    fun digits_7_supported() {
+        assertEquals("4287082", Totp.generate(rfcSecret, 59, digits = 7))
+    }
 }

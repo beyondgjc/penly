@@ -129,6 +129,10 @@ private fun ReadyRoot(repo: VaultRepository, onVaultChanged: () -> Unit) {
             } catch (e: VaultLockedException) {
                 // 金库在扫码期间被 15s 自动锁兜底锁定（极少见：手动锁定/系统回收）
                 android.widget.Toast.makeText(context, "金库已锁定，请解锁印迹后重新扫码", android.widget.Toast.LENGTH_SHORT).show()
+            } catch (e: IllegalArgumentException) {
+                // parseInput 的边界拒绝（digits/period 越界、hotp 链接、非法字符等）——
+                // 具体原因透出（区别于「不是有效二维码」的泛化提示），用户可自查二维码来源
+                android.widget.Toast.makeText(context, e.message ?: "不是有效的 2FA 二维码", android.widget.Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
                 android.widget.Toast.makeText(context, "不是有效的 2FA 二维码", android.widget.Toast.LENGTH_SHORT).show()
             }

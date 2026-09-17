@@ -62,9 +62,11 @@ object Totp {
     /**
      * Base32 解码（RFC 4648）。
      * 容错：忽略空格/连字符/padding（=），小写自动转大写。
+     * 边界：全 padding / 空串输入 → 解不出任何字节，直接拒绝（与 normalizeBase32 同口径）。
      */
     fun base32Decode(input: String): ByteArray {
         val clean = input.filter { it != ' ' && it != '-' && it != '=' }.uppercase()
+        require(clean.isNotEmpty()) { "密钥为空" }
         val out = ByteArray(clean.length * 5 / 8)
         var buffer = 0
         var bits = 0
@@ -85,8 +87,9 @@ object Totp {
     /**
      * 生成指定时刻的验证码。
      * @param secret 共享密钥字节（base32 解码后的原始字节）
-     * @param timeSeconds Unix 时间秒
-     * @param digits 验证码位数
+     * @param timeSeconds Unix 时间秒（必须非负：负值意味着时钟异常，算出的码必然错）
+     * @param digits 验证码位数（RFC 6238 §5.3 仅定义 6-8 位；1-5/9+ 位的服务端不存在，
+     *   接受只会生成「看似能用但必然错」的码）
      * @param period 时间窗秒数
      */
     fun generate(
@@ -97,9 +100,10 @@ object Totp {
         algo: String = DEFAULT_ALGO,
     ): String {
         require(secret.isNotEmpty()) { "密钥为空" }
-        require(digits in 1..9) { "位数不支持：$digits" }
+        require(digits in 6..8) { "位数不支持：$digits（仅支持 6-8 位）" }
         require(period in 1..3600) { "刷新间隔不支持：$period" }
         require(algo in ALGORITHMS) { "不支持的算法：$algo" }
+        require(timeSeconds >= 0) { "时间戳非法：$timeSeconds" }
         val counter = timeSeconds / period
         // 计数器转 8 字节大端（RFC 6238 §4.1）
         val msg = ByteArray(8).apply {
@@ -133,7 +137,11 @@ object Totp {
      * 1) 光秃秃的 base32 串：去空格/连字符、统一大写，参数用默认 6/30/SHA1
      * 2) `otpauth://totp/...?secret=XXX&digits=8&period=60&algorithm=SHA256` 完整链接：
      *    提取 secret 并读取 digits/period/algorithm（缺省回落 6/30/SHA1）；
-     *    **algorithm 参数出现但不认识时抛错**——静默忽略会生成"看似能用但永远错"的码（N1 教训）
+     *    **algorithm 参数出现但不认识时抛错**——静默忽略会生成"看似能用但永远错"的码（N1 教训）；
+     *    **digits/period 参数出现但越界时同样抛错**（与本条同口径——越界值一律是坏链接，
+     *    静默回落默认会生成与网站参数不一致的码，且用户无从发现）；
+     *    **链接 type 段校验**：`otpauth://hotp/`（计数器型，无 period 语义）与未知类型
+     *    一律拒绝——把 HOTP 密钥当 TOTP 导入会生成永远对不上的码。
      * 非法输入抛 IllegalArgumentException（由 UI 层转为错误提示）。
      */
     fun parseInput(raw: String): Params {
@@ -143,7 +151,10 @@ object Totp {
             return Params(normalizeBase32(s), DEFAULT_DIGITS, DEFAULT_PERIOD)
         }
         // otpauth://totp/Label?secret=..&issuer=..&digits=..&period=..&algorithm=..
+        //      ↑ type 段必须为 totp（hotp 是计数器型 RFC 4226，语义完全不同）
         val body = s.substringAfter("://")
+        val type = body.substringBefore('/', "").substringBefore('?').lowercase()
+        require(type == "totp") { "不支持的链接类型：${type.ifBlank { "未知" }}（仅支持 otpauth://totp）" }
         val path = body.substringAfter('/', "").substringBefore('?')
         val query = s.substringAfter('?', "")
         val params = query.split('&')
@@ -153,9 +164,9 @@ object Totp {
             }
             .toMap()
         val secret = params["secret"] ?: ""
-        require(secret.isNotEmpty()) { "链接中未找到 secret 参数" }
-        val digits = params["digits"]?.toIntOrNull()?.takeIf { it in 1..9 } ?: DEFAULT_DIGITS
-        val period = params["period"]?.toIntOrNull()?.takeIf { it in 1..3600 } ?: DEFAULT_PERIOD
+        require(secret.isNotEmpty()) { "链接中 secret 参数缺失或为空" }
+        val digits = parseDigitsParam(params["digits"])
+        val period = parsePeriodParam(params["period"])
         val algo = params["algorithm"]?.let { normalizeAlgo(it) } ?: DEFAULT_ALGO
         // 显示名/网站名 URL 解码（容错：解码失败保留原值）
         val label = runCatching { java.net.URLDecoder.decode(path, "UTF-8") }.getOrNull()?.takeIf { it.isNotBlank() }
@@ -173,11 +184,32 @@ object Totp {
     }
 
     /**
+     * 链接 digits 参数解析：**未出现**（null）→ 缺省 6；**出现即必须合法**，
+     * 与 algorithm 参数同口径（N1 教训）——非 Int / 越界（仅支持 RFC 6238 的 6-8 位）
+     * 一律抛错，绝不静默回落默认——回落会生成与网站参数不一致的码，且用户无从发现。
+     */
+    private fun parseDigitsParam(v: String?): Int {
+        v ?: return DEFAULT_DIGITS
+        val n = v.toIntOrNull() ?: throw IllegalArgumentException("链接 digits 参数无效：$v")
+        require(n in 6..8) { "链接 digits 参数不支持：$n（仅支持 6-8 位）" }
+        return n
+    }
+
+    /** 链接 period 参数解析：未出现（null）→ 缺省 30；出现即必须合法（1-3600 秒），同上不静默回落 */
+    private fun parsePeriodParam(v: String?): Int {
+        v ?: return DEFAULT_PERIOD
+        val n = v.toIntOrNull() ?: throw IllegalArgumentException("链接 period 参数无效：$v")
+        require(n in 1..3600) { "链接 period 参数不支持：$n（1-3600 秒）" }
+        return n
+    }
+
+    /**
      * 编辑回存语义（P1 修复）：编辑页保存时解析输入并决定入库参数。
      * - 输入是 otpauth 链接：链接参数优先（链接没带 digits/period 时回落默认 6/30）
      * - 输入是裸 base32（含编辑预填的存量密钥——decryptItem 返回的就是规范化 base32 而非原始链接）：
      *   **保留条目已存的 digits/period**，绝不能用 parseInput 的默认值覆盖，
      *   否则扫码录入的 digits=8 条目改个备注就会被静默改回 6/30（回归 P1）
+     * 存量参数越界（如历史脏数据 digits=9）回落默认——写入域已收紧为 6-8 位。
      * @param storedDigits 条目当前存储的位数（0 = 无/默认）
      * @param storedPeriod 条目当前存储的间隔（0 = 无/默认）
      */
@@ -185,7 +217,7 @@ object Totp {
         val p = parseInput(raw)
         val fromUri = raw.trim().startsWith("otpauth://", ignoreCase = true)
         return if (fromUri) p else p.copy(
-            digits = storedDigits.takeIf { it in 1..9 } ?: DEFAULT_DIGITS,
+            digits = storedDigits.takeIf { it in 6..8 } ?: DEFAULT_DIGITS,
             period = storedPeriod.takeIf { it in 1..3600 } ?: DEFAULT_PERIOD,
             algo = storedAlgo.takeIf { it in ALGORITHMS } ?: DEFAULT_ALGO,
         )

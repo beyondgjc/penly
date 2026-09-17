@@ -124,10 +124,8 @@ fun EditScreen(repo: VaultRepository, itemId: String, onDone: (Boolean) -> Unit)
         val totpParams = if (totp.isBlank()) null else try {
             Totp.resolveEditParams(totp, totpDigits, totpPeriod, totpAlgo)
         } catch (e: Exception) {
-            error = when {
-                e.message?.startsWith("不支持的算法") == true -> e.message ?: "2FA 密钥格式不正确"
-                else -> "2FA 密钥格式不正确（应为 base32 串或 otpauth 链接）"
-            }
+            // 具体原因透出（算法/位数/间隔越界、hotp 链接、非法字符各有专属文案）
+            error = e.message ?: "2FA 密钥格式不正确（应为 base32 串或 otpauth 链接）"
             return
         }
         busy = true
