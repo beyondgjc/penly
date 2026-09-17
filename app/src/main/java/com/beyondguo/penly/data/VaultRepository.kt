@@ -803,6 +803,14 @@ class VaultRepository(private val store: VaultStore) {
         return null
     }
 
+    /**
+     * 导入前预检：验证备份密码，确保「解得开才导入」（见 [BackupCodec.verifyPassword]）。
+     * 返回 null = 通过，可执行 [importJson]；非 null = 可直接展示的错误文案。
+     * PBKDF2 派生走 Default 调度，避免阻塞调用方。
+     */
+    suspend fun verifyBackupPassword(text: String, password: String): String? =
+        withContext(Dispatchers.Default) { BackupCodec.verifyPassword(text, password) }
+
     /** 重置印迹：清空两个槽位（忘记主密码场景） */
     suspend fun resetVault() {
         store.clearAll()

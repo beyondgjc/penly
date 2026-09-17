@@ -492,35 +492,76 @@ fun SettingsScreen(
         )
     }
 
-    // ---- 导入确认 ----
+    // ---- 导入确认：先验证备份密码（解得开才导入），再执行覆盖 ----
     if (pendingImport != null) {
-        ConfirmDialog(
-            title = "导入数据",
-            text = "将用备份文件覆盖本机当前数据，此操作不可撤销。确定导入吗？",
-            confirmText = "导入",
-            danger = true,
-            onConfirm = {
-                importing = true
-                scope.launch {
-                    try {
-                        val r = repo.importJson(pendingImport!!)
-                        pendingImport = null
-                        importing = false
-                        when (r.type) {
-                            ImportType.WIPED -> showToast("备份为空，已清空本机数据")
-                            ImportType.RESTORED ->
-                                showToast("导入 ${r.count} 条，请用该备份的主密码解锁")
-                            ImportType.REENCRYPTED ->
-                                showToast("导入 ${r.count} 条，已转入默认保护，建议设置主密码")
-                        }
-                        onVaultChanged()
-                    } catch (e: Exception) {
-                        importing = false
-                        showToast(e.message ?: "导入失败")
+        var importPwd by rememberSaveable { mutableStateOf("") }
+        var importError by rememberSaveable { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { if (!importing) pendingImport = null },
+            title = { Text("导入数据") },
+            text = {
+                Column {
+                    Text(
+                        "将用备份文件覆盖本机当前数据，此操作不可撤销。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "先验证备份密码，确保导入的数据可读；导入完成后请用该备份对应的密码解锁。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = importPwd,
+                        onValueChange = { importPwd = it; importError = "" },
+                        label = { Text("备份密码") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        enabled = !importing,
+                    )
+                    if (importError.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(importError, color = PenDanger, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             },
-            onDismiss = { pendingImport = null },
+            confirmButton = {
+                TextButton(
+                    enabled = !importing,
+                    onClick = {
+                        val text = pendingImport ?: return@TextButton
+                        scope.launch {
+                            importing = true
+                            val err = repo.verifyBackupPassword(text, importPwd)
+                            if (err != null) {
+                                importing = false
+                                importError = err
+                                return@launch
+                            }
+                            try {
+                                val r = repo.importJson(text)
+                                pendingImport = null
+                                importing = false
+                                when (r.type) {
+                                    ImportType.WIPED -> showToast("备份为空，已清空本机数据")
+                                    ImportType.RESTORED ->
+                                        showToast("导入 ${r.count} 条，请用该备份的主密码解锁")
+                                    ImportType.REENCRYPTED ->
+                                        showToast("导入 ${r.count} 条，已转入默认保护，建议设置主密码")
+                                }
+                                onVaultChanged()
+                            } catch (e: Exception) {
+                                importing = false
+                                showToast(e.message ?: "导入失败")
+                            }
+                        }
+                    },
+                ) { Text(if (importing) "验证中..." else "导入") }
+            },
+            dismissButton = {
+                TextButton(onClick = { if (!importing) pendingImport = null }) { Text("取消") }
+            },
         )
     }
 
