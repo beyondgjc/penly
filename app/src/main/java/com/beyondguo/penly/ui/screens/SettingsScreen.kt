@@ -458,18 +458,13 @@ fun SettingsScreen(
                     enabled = bioMaster.isNotEmpty(),
                     onClick = {
                         scope.launch {
-                            // 用 verifyPassword 而非 unlock：只校验、不切换会话，
-                            // 万一用户输入的是应急密码也不会把会话带进另一份数据
-                            if (!repo.verifyPassword(bioMaster)) {
-                                bioError = "主密码错误"
-                                return@launch
-                            }
-                            // 校验「输入的密码是当前金库的密码」：指纹永远只打开
-                            // 当前会话正在看的这份，主库会话输应急密码会被拒（它开
-                            // 的是另一槽位）。旧逻辑用 isPrimary()（会话是否主库）
-                            // 有两处错：① 真主人被误伤——isPrimary() 判 false 时
-                            // 假报"已开启"却不落盘（saveMaster 未调用），重进页面
-                            // 开关弹回关；② 它声称要防的跨库场景实际判定不到。
+                            // 只认当前会话金库的密码：指纹永远只打开当前正在看的这份——
+                            // 主库会话输应急密码会被拒（应急密码开的是另一槽位），
+                            // 影子会话输应急密码则正常放行（缓存的就是自己世界的密码）。
+                            // 旧版第一道 verifyPassword（任一槽位匹配即过）是本检查的
+                            // 逻辑子集，纯冗余，已删；更早的 isPrimary() 门禁有两处错
+                            //（真主人被误伤——假报已开启却不落盘、开关弹回；跨库场景
+                            // 实际判定不到），一并移除。
                             if (!repo.verifyCurrentVaultPassword(bioMaster)) {
                                 bioError = "主密码错误"
                                 return@launch
