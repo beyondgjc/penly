@@ -29,6 +29,15 @@
 # pinyin4j：纯查表实现，无反射/JNI
 # DataStore preferences / Compose / fragment / biometric / coroutines：均自带 consumer rules
 
+# ---- kotlin stdlib 校验类：跨 APK 混淆对齐的钉子（2026-09-18）----
+# AGP 8.9.1 的 R8 对 kotlin.jvm.internal.Intrinsics 做了水平类合并+参数重排
+# （mapping 里 checkNotNullParameter(Object,String) -> f 但 residual 签名是
+# (String,Object)）：androidTest 包经 -applymapping 只对齐名字、参数顺序仍是
+# 原始序 → 运行时 NoSuchMethodError，instrumentation 在 newApplication 即崩
+# （AppComponentFactoryRegistry.instantiateApplication，Release 回归实测）。
+# keep 住整包：不做合并/重排/改名，两端签名天然一致。体积代价 ~几 KB。
+-keep class kotlin.jvm.internal.** { *; }
+
 # ---- release 剥离 android.util.Log ----
 # 为什么：logcat 对本应用是侧信道。VaultRepository 重建检索索引时会把"当前是 A 槽位
 # 还是 B 槽位"打进 logcat（检索索引已重建：slot=A/B），任何有 adb 读日志权限的第三方
