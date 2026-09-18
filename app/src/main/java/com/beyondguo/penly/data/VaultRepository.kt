@@ -2,11 +2,13 @@ package com.beyondguo.penly.data
 
 import android.util.Log
 import com.beyondguo.penly.backup.BackupCodec
+import com.beyondguo.penly.backup.BackupCodecV2
 import com.beyondguo.penly.backup.BackupCrypto
 import com.beyondguo.penly.backup.BackupData
 import com.beyondguo.penly.backup.BackupFile
 import com.beyondguo.penly.backup.BackupFormatException
 import com.beyondguo.penly.crypto.CryptoEngine
+import com.beyondguo.penly.crypto.CryptoV2
 import com.beyondguo.penly.crypto.MacVerificationException
 import com.beyondguo.penly.crypto.SessionManager
 import com.beyondguo.penly.search.Embedder
@@ -106,7 +108,11 @@ class VaultRepository(private val store: VaultStore) {
         val peerSaltB64 = CryptoEngine.randomSaltB64()
         val peerKey = CryptoEngine.deriveKeyB64(peerPassword, peerSaltB64)
         val (peerVerify, peerVerifyIv) = CryptoEngine.makeVerify(peerKey)
-        val peerItems = encryptEntries(ShadowVaultGenerator.generate(legacy.second), peerKey)
+        val peerItems = ItemCipher.encryptEntries(
+            ShadowVaultGenerator.generate(legacy.second),
+            peerKey,
+            VaultMeta.SCHEMA_V2, // legacy 数据是 CBC 格式，搬运零变换
+        )
         peerKey.fill(0)
 
         // 双槽位原子提交：v1 数据搬运、占位影子建立与 legacy 清除在**同一次** edit
@@ -164,8 +170,12 @@ class VaultRepository(private val store: VaultStore) {
         val peerKey = CryptoEngine.deriveKeyB64(peerPassword, peerSaltB64)
         val (peerVerify, peerVerifyIv) = CryptoEngine.makeVerify(peerKey)
 
-        // 真库此刻为空 → 影子也为空
-        val peerItems = encryptEntries(ShadowVaultGenerator.generate(emptyList()), peerKey)
+        // 真库此刻为空 → 影子也为空；新库从建立起就是 GCM 格式（无历史包袱）
+        val peerItems = ItemCipher.encryptEntries(
+            ShadowVaultGenerator.generate(emptyList()),
+            peerKey,
+            VaultMeta.SCHEMA_V3,
+        )
         val auxReal = CryptoEngine.aesEncrypt(peerPassword, realKey)
         val auxPeer = CryptoEngine.aesEncrypt(CryptoEngine.randomHex(32), peerKey) // 诱饵
         peerKey.fill(0)
@@ -177,7 +187,7 @@ class VaultRepository(private val store: VaultStore) {
             pwdMode = mode,
             createdAt = now,
             updatedAt = now,
-            schemaVersion = VaultMeta.SCHEMA_V2,
+            schemaVersion = VaultMeta.SCHEMA_V3,
             auxSaltB64 = peerSaltB64,
             auxSecretEnc = auxReal.dataB64,
             auxSecretIv = auxReal.ivB64,
@@ -189,7 +199,7 @@ class VaultRepository(private val store: VaultStore) {
             pwdMode = mode,
             createdAt = now, // 与真库槽位同值：不允许"更早的是真库"成为规律
             updatedAt = now,
-            schemaVersion = VaultMeta.SCHEMA_V2,
+            schemaVersion = VaultMeta.SCHEMA_V3,
             auxSaltB64 = realSaltB64,
             auxSecretEnc = auxPeer.dataB64,
             auxSecretIv = auxPeer.ivB64,
@@ -344,6 +354,7 @@ class VaultRepository(private val store: VaultStore) {
 
     fun lock() {
         searchIndex.clear() // 锁定即销毁：向量从不落盘，清空内存即可，无残留风险
+        formatCache = null
         SessionManager.lock()
     }
 
@@ -391,6 +402,23 @@ class VaultRepository(private val store: VaultStore) {
      */
     @Volatile
     private var primaryCache: Boolean? = null
+
+    /**
+     * 当前会话的条目加密格式（会话级缓存，惰性从槽位 meta 读取）。
+     * 读/写路径据此分派 CBC（V2）/ GCM（V3）；迁移、导入重建后主动刷新。
+     * 只驻内存，[lock] 即清——与新会话的磁盘格式天然重新对齐。
+     */
+    @Volatile
+    private var formatCache: Int? = null
+
+    private suspend fun currentFormat(): Int {
+        formatCache?.let { return it }
+        val fmt = SessionManager.activeSlotOrNull()
+            ?.let { store.readMeta(it)?.schemaVersion }
+            ?: VaultMeta.SCHEMA_V1
+        formatCache = fmt
+        return fmt
+    }
 
     // ---- 端内 AI 检索：索引纯内存，不落盘（见《印迹_端内AI检索_技术方案.md》§3.2）----
     private val searchIndex = SearchIndex()
@@ -440,13 +468,15 @@ class VaultRepository(private val store: VaultStore) {
         if (sameAsMaster) return "应急密码不能与主密码相同"
 
         val oldPeerMeta = store.readMeta(peer)
+        val fmt = currentFormat() // 影子条目格式与真库保持一致
 
         val newSaltB64 = CryptoEngine.randomSaltB64()
         val newKey = CryptoEngine.deriveKeyB64(duress, newSaltB64)
         val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(newKey)
-        val shadowItems = encryptEntries(
+        val shadowItems = ItemCipher.encryptEntries(
             ShadowVaultGenerator.generate(store.readItems(slot)),
             newKey,
+            fmt,
         )
         val auxPeer = CryptoEngine.aesEncrypt(CryptoEngine.randomHex(32), newKey) // 诱饵
         val now = System.currentTimeMillis()
@@ -466,7 +496,7 @@ class VaultRepository(private val store: VaultStore) {
                     pwdMode = m.pwdMode, // 与主槽位保持一致，避免影子库停留在旧模式
                     createdAt = oldPeerMeta?.createdAt ?: now, // 保持：假装它一直存在
                     updatedAt = oldPeerMeta?.updatedAt ?: now, // 冻结：设应急密码不得在磁盘留时间戳痕迹（否则 updatedAt>createdAt 即暴露"已设应急"）
-                    schemaVersion = VaultMeta.SCHEMA_V2,
+                    schemaVersion = fmt,
                     auxSaltB64 = m.saltB64,
                     auxSecretEnc = auxPeer.dataB64,
                     auxSecretIv = auxPeer.ivB64,
@@ -502,7 +532,10 @@ class VaultRepository(private val store: VaultStore) {
         val m = store.readMeta(slot) ?: return
         val aux = readAuxSecret(m, SessionManager.requireKey()) ?: return
         val peerKey = CryptoEngine.deriveKeyB64(aux, peerMeta.saltB64)
-        store.writeItems(peer, encryptEntries(ShadowVaultGenerator.generate(realItems), peerKey))
+        store.writeItems(
+            peer,
+            ItemCipher.encryptEntries(ShadowVaultGenerator.generate(realItems), peerKey, currentFormat()),
+        )
         peerKey.fill(0)
     }
 
@@ -521,7 +554,11 @@ class VaultRepository(private val store: VaultStore) {
         val peerSaltB64 = CryptoEngine.randomSaltB64()
         val peerKey = CryptoEngine.deriveKeyB64(peerPassword, peerSaltB64)
         val (peerVerify, peerVerifyIv) = CryptoEngine.makeVerify(peerKey)
-        val peerItems = encryptEntries(ShadowVaultGenerator.generate(store.readItems(slot)), peerKey)
+        val peerItems = ItemCipher.encryptEntries(
+            ShadowVaultGenerator.generate(store.readItems(slot)),
+            peerKey,
+            m.schemaVersion, // 占位影子与真库格式一致
+        )
         val auxPeer = CryptoEngine.aesEncrypt(CryptoEngine.randomHex(32), peerKey) // 诱饵
         peerKey.fill(0)
         val auxReal = CryptoEngine.aesEncrypt(peerPassword, key)
@@ -539,7 +576,7 @@ class VaultRepository(private val store: VaultStore) {
                     pwdMode = m.pwdMode,
                     createdAt = createdAt,
                     updatedAt = createdAt,
-                    schemaVersion = VaultMeta.SCHEMA_V2,
+                    schemaVersion = m.schemaVersion,
                     auxSaltB64 = m.saltB64,
                     auxSecretEnc = auxPeer.dataB64,
                     auxSecretIv = auxPeer.ivB64,
@@ -549,7 +586,6 @@ class VaultRepository(private val store: VaultStore) {
             write(
                 slot,
                 meta = m.copy(
-                    schemaVersion = VaultMeta.SCHEMA_V2,
                     auxSaltB64 = peerSaltB64,
                     auxSecretEnc = auxReal.dataB64,
                     auxSecretIv = auxReal.ivB64,
@@ -640,12 +676,13 @@ class VaultRepository(private val store: VaultStore) {
      */
     private suspend fun VaultItem.toSearchEntry(): SearchEntry {
         // 逐条降级（review C2）：单条解密/验签失败只影响该条索引，不让后台重建崩掉
-        val account = if (accountEnc.isBlank()) "" else runCatching { decryptAccount(this) }.getOrDefault("")
+        val key = SessionManager.requireKey()
+        val fmt = currentFormat()
+        val account = if (accountEnc.isBlank()) "" else runCatching {
+            ItemCipher.decField(fmt, ItemCipher.F_ACCOUNT, id, accountEnc, accountIv, accountMac, key)
+        }.getOrDefault("")
         val note = if (noteEnc.isBlank()) "" else runCatching {
-            CryptoEngine.aesDecrypt(
-                CryptoEngine.EncPayload(noteIv, noteEnc),
-                SessionManager.requireKey(),
-            )
+            ItemCipher.decField(fmt, ItemCipher.F_NOTE, id, noteEnc, noteIv, noteMac, key)
         }.getOrDefault("")
         return SearchEntry(
             itemId = id,
@@ -673,42 +710,24 @@ class VaultRepository(private val store: VaultStore) {
 
     /**
      * 解密条目；未解锁抛 [com.beyondguo.penly.crypto.VaultLockedException]。
-     * 带 MAC 的字段先验签（encrypt-then-MAC），不符 ≡ 解密失败一并抛出——
-     * 展示面由调用方逐条降级，写回面（EditScreen）fail-closed。
+     * 按当前会话格式分派（V2=CBC+MAC / V3=GCM，见 [ItemCipher]）；完整性失败
+     * 统一抛 MacVerificationException——展示面由调用方逐条降级，写回面 fail-closed。
      */
-    suspend fun decryptItem(item: VaultItem): PlainEntry {
-        val key = SessionManager.requireKey()
-        val mk = CryptoEngine.macSubKey(key)
-        fun dec(enc: String, iv: String, mac: String): String {
-            if (enc.isBlank()) return ""
-            if (!CryptoEngine.verifyRecordMac(mk, iv, enc, mac)) throw MacVerificationException()
-            return CryptoEngine.aesDecrypt(CryptoEngine.EncPayload(iv, enc), key)
-        }
-        return PlainEntry(
-            id = item.id,
-            title = item.title,
-            category = item.category,
-            account = dec(item.accountEnc, item.accountIv, item.accountMac),
-            secret = dec(item.secretEnc, item.secretIv, item.secretMac),
-            note = dec(item.noteEnc, item.noteIv, item.noteMac),
-            totp = dec(item.totpEnc, item.totpIv, item.totpMac),
-            totpDigits = item.totpDigits,
-            totpPeriod = item.totpPeriod,
-            totpAlgo = item.totpAlgo,
-            appPackage = item.appPackage,
-            createdAt = item.createdAt,
-            updatedAt = item.updatedAt,
-        )
-    }
+    suspend fun decryptItem(item: VaultItem): PlainEntry =
+        ItemCipher.decryptItem(item, SessionManager.requireKey(), currentFormat())
 
-    /** 仅解密账号字段（列表副标题用，比整条解密轻量）；验签语义同 [decryptItem] */
+    /** 仅解密账号字段（列表副标题用，比整条解密轻量）；完整性语义同 [decryptItem] */
     suspend fun decryptAccount(item: VaultItem): String {
         if (item.accountEnc.isBlank()) return ""
-        val key = SessionManager.requireKey()
-        if (!CryptoEngine.verifyRecordMac(CryptoEngine.macSubKey(key), item.accountIv, item.accountEnc, item.accountMac)) {
-            throw MacVerificationException()
-        }
-        return CryptoEngine.aesDecrypt(CryptoEngine.EncPayload(item.accountIv, item.accountEnc), key)
+        return ItemCipher.decField(
+            currentFormat(),
+            ItemCipher.F_ACCOUNT,
+            item.id,
+            item.accountEnc,
+            item.accountIv,
+            item.accountMac,
+            SessionManager.requireKey(),
+        )
     }
 
     /** 新增或更新（title/category 明文索引，account/secret/note/totp 加密；totp 参数非敏感明文存储） */
@@ -727,31 +746,27 @@ class VaultRepository(private val store: VaultStore) {
     ): String {
         val key = SessionManager.requireKey()
         val slot = SessionManager.requireSlot()
-        // encrypt-then-MAC：加密即算 Mac（四元组：account/secret/note/totp；空字段三空）
-        val macKey = CryptoEngine.macSubKey(key)
-        fun enc(plain: String): Triple<String, String, String> =
-            if (plain.isEmpty()) Triple("", "", "") else {
-                val p = CryptoEngine.aesEncrypt(plain, key)
-                Triple(p.dataB64, p.ivB64, CryptoEngine.recordMac(macKey, p.ivB64, p.dataB64))
-            }
-        val (aE, aI, aM) = enc(account)
-        val (sE, sI, sM) = enc(secret)
-        val (nE, nI, nM) = enc(note)
-        val (tE, tI, tM) = enc(totpSecret)
         val now = System.currentTimeMillis()
         val old = id?.let { item(it) }
+        val itemId = old?.id ?: CryptoEngine.genId()
+        // 字段加密按当前会话格式分派（V2=CBC+MAC / V3=GCM）；GCM 的 AAD 绑定条目 id，
+        // 所以必须先定 id 再加密
+        val fmt = currentFormat()
+        val a = ItemCipher.encField(fmt, ItemCipher.F_ACCOUNT, itemId, account, key)
+        val s = ItemCipher.encField(fmt, ItemCipher.F_SECRET, itemId, secret, key)
+        val n = ItemCipher.encField(fmt, ItemCipher.F_NOTE, itemId, note, key)
+        val t = ItemCipher.encField(fmt, ItemCipher.F_TOTP, itemId, totpSecret, key)
         val newItem = VaultItem(
-            id = old?.id ?: CryptoEngine.genId(),
+            id = itemId,
             title = title.trim(),
             category = category.trim().ifBlank { "默认" },
-            accountEnc = aE, accountIv = aI,
-            secretEnc = sE, secretIv = sI,
-            noteEnc = nE, noteIv = nI,
-            totpEnc = tE, totpIv = tI,
+            accountEnc = a.dataB64, accountIv = a.ivB64, accountMac = a.macB64,
+            secretEnc = s.dataB64, secretIv = s.ivB64, secretMac = s.macB64,
+            noteEnc = n.dataB64, noteIv = n.ivB64, noteMac = n.macB64,
+            totpEnc = t.dataB64, totpIv = t.ivB64, totpMac = t.macB64,
             totpDigits = totpDigits, totpPeriod = totpPeriod,
             totpAlgo = totpAlgo,
             appPackage = appPackage,
-            accountMac = aM, secretMac = sM, noteMac = nM, totpMac = tM,
             createdAt = old?.createdAt ?: now,
             updatedAt = now,
         )
@@ -806,8 +821,9 @@ class VaultRepository(private val store: VaultStore) {
             val newSaltB64 = CryptoEngine.randomSaltB64()
             val newKey = CryptoEngine.deriveKeyB64(newPlain, newSaltB64)
             val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(newKey)
+            val fmt = currentFormat() // 改密不换格式：CBC 库改密仍 CBC，GCM 库改密仍 GCM
             val reEnc = try {
-                reEncryptItems(store.readItems(slot), oldKey, newKey)
+                ItemCipher.reEncryptItems(store.readItems(slot), oldKey, newKey, fmt, fmt)
             } catch (e: MacVerificationException) {
                 // 有记录被篡改/损坏：整个改密中止，磁盘保持原状（以前这类记录会静默变乱码）
                 oldKey.fill(0)
@@ -848,12 +864,25 @@ class VaultRepository(private val store: VaultStore) {
         }
 
     /**
-     * 导入前预检：验证备份密码，确保「解得开才导入」（见 [BackupCodec.verifyPassword]）。
+     * 导入前预检：验证备份密码，确保「解得开才导入」。
+     * v1/v2 备份按顶层 version 自动分发（[BackupCodecV2.decodeAny]），两端各有实现：
+     * v1 走 MAC 验证（[BackupCodec.verifyPassword]），v2 走 verify 槽位 GCM 验证。
      * 返回 null = 通过，可执行 [importJson]；非 null = 可直接展示的错误文案。
-     * PBKDF2 派生走 Default 调度，避免阻塞调用方。
+     * 密钥派生（PBKDF2/Argon2id）走 Default 调度，避免阻塞调用方。
      */
     suspend fun verifyBackupPassword(text: String, password: String): String? =
-        withContext(Dispatchers.Default) { BackupCodec.verifyPassword(text, password) }
+        withContext(Dispatchers.Default) {
+            when (
+                try {
+                    BackupCodecV2.decodeAny(text)
+                } catch (e: BackupFormatException) {
+                    return@withContext e.message ?: "备份文件无效"
+                }
+            ) {
+                is BackupCodecV2.ParsedBackup.V1 -> BackupCodec.verifyPassword(text, password)
+                is BackupCodecV2.ParsedBackup.V2 -> BackupCodecV2.verifyPassword(text, password)
+            }
+        }
 
     /** 重置印迹：清空两个槽位（忘记主密码场景） */
     suspend fun resetVault() {
@@ -861,51 +890,138 @@ class VaultRepository(private val store: VaultStore) {
         lock() // 顺带清空检索索引
     }
 
+    // ---------------- 存储格式迁移（CBC → GCM，显式一次性） ----------------
+
+    /**
+     * 是否需要条目格式迁移（SCHEMA_V2 的 CBC+MAC → SCHEMA_V3 的 GCM）。
+     * 仅主库会话返回 true——影子会话静默跳过（不弹窗、不迁移，避免在胁迫场景
+     * 产生重复异常信号；影子库格式由下次主库会话的影子同步自然对齐）。
+     */
+    suspend fun needsFormatMigration(): Boolean =
+        SessionManager.isUnlocked() && isPrimaryCached() &&
+            meta()?.schemaVersion == VaultMeta.SCHEMA_V2
+
+    /**
+     * 条目格式迁移：CBC+MAC（V2）→ GCM 逐字段（V3）。**密钥全程不变**
+     * （key = PBKDF2(主密码, 同一 salt)）——verify 链、解锁流程、指纹缓存、aux
+     * 凭证零扰动，这正是 fail-safe 的根基：任何一步失败，磁盘都保持完整 V2 状态，
+     * V2 读取链路照常可用，下次进入重新询问。
+     *
+     * - 真库：会话密钥重加密全部条目（逐条严格验旧 MAC，损坏即中止）；
+     * - 影子槽位：aux 链健康时用影子自己的密钥同步升级；aux 缺失时影子整体
+     *   保持旧格式（读写自洽，不产生混合格式槽位）；
+     * - 双槽位在同一次 commitSlots 事务内落盘，中途 kill 不留半迁移状态。
+     *
+     * @return null = 成功（或已是新格式 / 影子会话 noop）；非 null = 可展示的错误文案
+     */
+    suspend fun migrateStorageFormat(): String? = withContext(Dispatchers.Default) {
+        val slot = SessionManager.activeSlotOrNull() ?: return@withContext "印迹未解锁"
+        if (!isPrimaryCached()) return@withContext null // 影子会话静默 noop（语义同改密）
+        val m = store.readMeta(slot) ?: return@withContext "印迹尚未初始化"
+        if (m.schemaVersion >= VaultMeta.SCHEMA_V3) return@withContext null
+        val key = SessionManager.requireKey()
+        val peer = slot.other()
+
+        // 真库：V2 → V3（旧 MAC 逐条验证，任何一条不符即中止，磁盘原状）
+        val reEnc = try {
+            ItemCipher.reEncryptItems(store.readItems(slot), key, key, m.schemaVersion, VaultMeta.SCHEMA_V3)
+        } catch (e: MacVerificationException) {
+            return@withContext e.message ?: "存在无法解密的记录，升级已中止，数据未变动"
+        }
+
+        // 影子槽位：aux 链健康才同步升级（影子 items 用影子自己的密钥重加密）。
+        // 失败文案必须中性——不可提"影子"，否则当面暴露影子库存在。
+        val peerMeta = store.readMeta(peer)
+        var shadowReEnc: List<VaultItem>? = null
+        if (peerMeta != null && peerMeta.schemaVersion < VaultMeta.SCHEMA_V3) {
+            val aux = readAuxSecret(m, key)
+            if (aux != null) {
+                val peerKey = CryptoEngine.deriveKeyB64(aux, peerMeta.saltB64)
+                shadowReEnc = try {
+                    ItemCipher.reEncryptItems(
+                        store.readItems(peer),
+                        peerKey,
+                        peerKey,
+                        peerMeta.schemaVersion,
+                        VaultMeta.SCHEMA_V3,
+                    )
+                } catch (e: MacVerificationException) {
+                    peerKey.fill(0)
+                    return@withContext e.message ?: "存在无法解密的记录，升级已中止，数据未变动"
+                }
+                peerKey.fill(0)
+            }
+        }
+
+        // 双槽位原子提交：格式升级只改 schemaVersion + items 密文，salt/verify/aux 不动
+        store.commitSlots {
+            write(slot, meta = m.copy(schemaVersion = VaultMeta.SCHEMA_V3), items = reEnc)
+            if (shadowReEnc != null && peerMeta != null) {
+                write(peer, meta = peerMeta.copy(schemaVersion = VaultMeta.SCHEMA_V3), items = shadowReEnc)
+            }
+        }
+        formatCache = VaultMeta.SCHEMA_V3
+        null
+    }
+
     // ---------------- 导出 / 导入 ----------------
 
     /**
-     * 导出为 `private-vault-backup` v1 JSON。
-     * 只导出**当前槽位**；`aux*` 是本机的槽位关联信息，不带进备份文件。
+     * 导出为 `private-vault-backup` v2 JSON（契约 v2：Argon2id + AES-256-GCM）。
+     * 只导出**当前槽位**的明文条目，由 [BackupCodecV2.encode] 重新加密落盘。
+     *
+     * 密码来源（契约 v2 的 KDF 是 Argon2id，必须有明文主密码）：
+     * - default 模式：用内置默认主密码（masterRef=android-def-v1），无需用户输入；
+     * - custom 模式：会话只存派生密钥，明文已丢弃 → 必须由用户**重输**主密码
+     *   （[masterPassword]，Bitwarden 同款语义）；导出前先校验，防止「输错密码
+     *   导出一份自己都解不开的备份」。
      */
-    suspend fun exportJson(): String {
+    suspend fun exportJson(masterPassword: String? = null): String {
         val slot = SessionManager.requireSlot()
         val m = store.readMeta(slot) ?: throw IllegalStateException("印迹尚未初始化")
-        val masterRef = if (m.pwdMode == VaultMeta.MODE_DEFAULT) CryptoEngine.MASTER_REF_ANDROID else null
-        val file = BackupFile(
-            format = BackupCodec.FORMAT,
-            version = BackupCodec.VERSION,
-            exportedAt = System.currentTimeMillis(),
-            crypto = BackupCrypto(
-                kdf = "PBKDF2",
-                hash = "SHA-256",
-                iterations = CryptoEngine.PBKDF2_ITERATIONS,
-                keyLen = CryptoEngine.KEY_LEN_BYTES,
-                saltLen = CryptoEngine.SALT_LEN_BYTES,
-                ivLen = CryptoEngine.IV_LEN_BYTES,
-                cipher = "AES-256-CBC",
-                encoding = "base64",
-                masterRef = masterRef,
-            ),
-            data = BackupData(
-                meta = m.copy(
-                    openid = null,
-                    schemaVersion = VaultMeta.SCHEMA_V1,
-                    auxSaltB64 = "",
-                    auxSecretEnc = "",
-                    auxSecretIv = "",
-                ),
-                items = store.readItems(slot),
-            ),
+        val isDefault = m.pwdMode == VaultMeta.MODE_DEFAULT
+        val password = if (isDefault) {
+            CryptoEngine.ANDROID_DEFAULT_MASTER
+        } else {
+            val typed = masterPassword
+                ?: throw IllegalArgumentException("当前为主密码保护，导出需输入主密码")
+            if (!verifyCurrentVaultPassword(typed)) {
+                throw IllegalArgumentException("主密码错误，未导出任何数据")
+            }
+            typed
+        }
+        val entries = store.readItems(slot).map { decryptItem(it) }
+        return BackupCodecV2.encode(
+            entries = entries,
+            masterRef = if (isDefault) CryptoEngine.MASTER_REF_ANDROID else null,
+            password = password,
+            vaultCreatedAt = m.createdAt,
         )
-        return BackupCodec.encode(file)
     }
 
     /**
-     * 导入备份并覆盖本地 —— **重建双槽位**：备份数据落到随机槽位，
-     * 另一槽位用无人知晓的随机密码建立占位数据。
+     * 导入备份并覆盖本地 —— v1/v2 按顶层 version 自动分发（[BackupCodecV2.decodeAny]）。
      * 导入完成即锁定；aux 凭证在首次解锁时补齐（见 [ensureAuxProvisioned]）。
      */
-    suspend fun importJson(text: String): ImportResult {
+    suspend fun importJson(text: String, password: String? = null): ImportResult =
+        when (
+            try {
+                BackupCodecV2.decodeAny(text)
+            } catch (e: BackupFormatException) {
+                throw ImportException(e.message ?: "备份文件无效")
+            }
+        ) {
+            is BackupCodecV2.ParsedBackup.V1 -> importV1(text, password)
+            is BackupCodecV2.ParsedBackup.V2 -> importV2(text, password)
+        }
+
+    /**
+     * v1 备份导入（PBKDF2 + AES-256-CBC）。
+     * 本地存储升到 GCM（SCHEMA_V3）后，v1 的 CBC 密文**不再能直落**——统一走
+     * 「v1 全量解密（严格验 MAC）→ 新盐重派生 → GCM 重加密 → 重建双槽位」。
+     * 本地解锁密码：custom 备份 = 备份密码；default 备份（含小程序来源）= 本地默认密码。
+     */
+    private suspend fun importV1(text: String, password: String?): ImportResult {
         val file = try {
             BackupCodec.decode(text)
         } catch (e: BackupFormatException) {
@@ -919,49 +1035,107 @@ class VaultRepository(private val store: VaultStore) {
         }
         val items = file.data.items
 
-        if (m.pwdMode != VaultMeta.MODE_DEFAULT) {
-            // custom：原样落地，解锁交给锁屏
-            rebuildBothSlots(m.copy(openid = null), items)
-            lock()
-            return ImportResult(ImportType.RESTORED, items.size)
-        }
-
-        val sourceMaster = when (file.crypto.masterRef) {
-            CryptoEngine.MASTER_REF_ANDROID -> CryptoEngine.ANDROID_DEFAULT_MASTER
-            null, CryptoEngine.MASTER_REF_WXB ->
-                m.openid?.let { CryptoEngine.WXB_DEFAULT_PREFIX + it }
-                    ?: throw ImportException("该备份为「默认保护」且缺少身份标识，无法解锁")
-            else -> throw ImportException("未知的密钥来源（${file.crypto.masterRef}），无法解锁")
+        // 源解密密码：custom 备份 = 用户输入；default 备份 = 按 masterRef 解析的内置密码
+        val sourceMaster = if (m.pwdMode != VaultMeta.MODE_DEFAULT) {
+            password ?: throw ImportException("该备份使用自定义密码保护，请输入备份密码")
+        } else {
+            when (file.crypto.masterRef) {
+                CryptoEngine.MASTER_REF_ANDROID -> CryptoEngine.ANDROID_DEFAULT_MASTER
+                null, CryptoEngine.MASTER_REF_WXB ->
+                    m.openid?.let { CryptoEngine.WXB_DEFAULT_PREFIX + it }
+                        ?: throw ImportException("该备份为「默认保护」且缺少身份标识，无法解锁")
+                else -> throw ImportException("未知的密钥来源（${file.crypto.masterRef}），无法解锁")
+            }
         }
         val srcKey = CryptoEngine.deriveKeyB64(sourceMaster, m.saltB64)
         if (!CryptoEngine.verifyMaster(srcKey, m.verifyB64, m.verifyIvB64)) {
             throw ImportException("备份校验失败，文件可能已损坏")
         }
-
-        if (file.crypto.masterRef == CryptoEngine.MASTER_REF_ANDROID) {
-            // 本应用 default 备份：原样落地
-            rebuildBothSlots(m.copy(openid = null), items)
-            lock()
-            return ImportResult(ImportType.REENCRYPTED, items.size)
-        }
-
-        // 小程序 default 备份：解密后用本地默认密钥重加密
-        val newSaltB64 = CryptoEngine.randomSaltB64()
-        val targetKey = CryptoEngine.deriveKeyB64(CryptoEngine.ANDROID_DEFAULT_MASTER, newSaltB64)
-        val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(targetKey)
-        val now = System.currentTimeMillis()
-        val reEnc = try {
-            reEncryptItems(items, srcKey, targetKey)
+        val plain = try {
+            ItemCipher.decryptItems(items, srcKey, VaultMeta.SCHEMA_V2)
         } catch (e: MacVerificationException) {
             // 备份内记录 MAC 与密文不符：拒绝导入，本地数据不受影响
             throw ImportException(e.message ?: "备份完整性校验失败")
         }
-        rebuildBothSlots(
-            VaultMeta(newSaltB64, newVerify, newVerifyIv, VaultMeta.MODE_DEFAULT, true, now, now),
-            reEnc,
+
+        // 本地目标密码：custom 备份 → 备份密码自身；default 备份（ANDROID/WXB）→ 转入本地默认保护
+        val isCustom = m.pwdMode != VaultMeta.MODE_DEFAULT
+        val localPwd = if (isCustom) sourceMaster else CryptoEngine.ANDROID_DEFAULT_MASTER
+        val newSaltB64 = CryptoEngine.randomSaltB64()
+        val localKey = CryptoEngine.deriveKeyB64(localPwd, newSaltB64)
+        val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(localKey)
+        val now = System.currentTimeMillis()
+        val realMeta = VaultMeta(
+            saltB64 = newSaltB64,
+            verifyB64 = newVerify,
+            verifyIvB64 = newVerifyIv,
+            pwdMode = if (isCustom) VaultMeta.MODE_CUSTOM else VaultMeta.MODE_DEFAULT,
+            createdAt = m.createdAt,
+            updatedAt = now,
         )
+        rebuildBothSlots(realMeta, ItemCipher.encryptEntries(plain, localKey, VaultMeta.SCHEMA_V3))
+        localKey.fill(0)
+        srcKey.fill(0)
         SessionManager.lock()
-        return ImportResult(ImportType.REENCRYPTED, items.size)
+        return ImportResult(
+            if (isCustom) ImportType.RESTORED else ImportType.REENCRYPTED,
+            plain.size,
+        )
+    }
+
+    /**
+     * v2 备份导入（Argon2id + AES-256-GCM）：GCM 密文无法直落本地 v1 CBC 存储，
+     * 必须全量解密 → 用**新盐**重新派生本地密钥重加密 → 重建双槽位。
+     * 本地解锁密码 = 备份密码；custom 备份 → [ImportType.RESTORED]，
+     * default 备份 → [ImportType.REENCRYPTED]（小程序备份转入本地默认保护）。
+     */
+    private suspend fun importV2(text: String, password: String?): ImportResult {
+        val file = try {
+            BackupCodecV2.decode(text)
+        } catch (e: BackupFormatException) {
+            throw ImportException(e.message ?: "备份文件无效")
+        }
+        // 解密密码：default 备份用内置主密码（按 masterRef 解析，忽略输入值）；
+        // custom 备份必须由用户输入。
+        val sourcePwd = BackupCodecV2.resolveDefaultMaster(file) ?: password
+            ?: throw ImportException("该备份使用自定义密码保护，请输入备份密码")
+        // 预检：解得开才动本地数据（verify 槽位 GCM 验证）
+        BackupCodecV2.verifyFile(file, sourcePwd)?.let { throw ImportException(it) }
+        val entries = try {
+            BackupCodecV2.decryptItems(file, sourcePwd)
+        } catch (e: CryptoV2.IntegrityException) {
+            // verify 槽位未动但条目密文被篡改：拒绝导入，本地数据不受影响
+            throw ImportException("备份完整性校验失败，文件可能已损坏")
+        }
+
+        // 本地目标密码：custom / 本应用 default 备份 → 备份密码自身；
+        // 小程序 default 备份 → 转入本地默认保护（对齐 v1 的 REENCRYPTED 语义）
+        val isCustom = file.crypto.masterRef == null
+        val localPwd = when (file.crypto.masterRef) {
+            null -> sourcePwd
+            CryptoEngine.MASTER_REF_ANDROID -> CryptoEngine.ANDROID_DEFAULT_MASTER
+            CryptoEngine.MASTER_REF_WXB -> CryptoEngine.ANDROID_DEFAULT_MASTER
+            else -> throw ImportException("未知的密钥来源（${file.crypto.masterRef}），无法导入")
+        }
+        val newSaltB64 = CryptoEngine.randomSaltB64()
+        val localKey = CryptoEngine.deriveKeyB64(localPwd, newSaltB64)
+        val (newVerify, newVerifyIv) = CryptoEngine.makeVerify(localKey)
+        val now = System.currentTimeMillis()
+        val realMeta = VaultMeta(
+            saltB64 = newSaltB64,
+            verifyB64 = newVerify,
+            verifyIvB64 = newVerifyIv,
+            pwdMode = if (isCustom) VaultMeta.MODE_CUSTOM else VaultMeta.MODE_DEFAULT,
+            createdAt = file.exportedAt.takeIf { it > 0 } ?: now,
+            updatedAt = now,
+        )
+        rebuildBothSlots(realMeta, ItemCipher.encryptEntries(entries, localKey, VaultMeta.SCHEMA_V3))
+        localKey.fill(0)
+        SessionManager.lock()
+        return ImportResult(
+            if (isCustom) ImportType.RESTORED else ImportType.REENCRYPTED,
+            entries.size,
+        )
     }
 
     /** 清空两个槽位后重建：真实数据落随机槽位，另一槽位放无人能解的占位数据 */
@@ -970,12 +1144,16 @@ class VaultRepository(private val store: VaultStore) {
         val peer = real.other()
         val now = System.currentTimeMillis()
         val createdAt = realMetaSource.createdAt.takeIf { it > 0 } ?: now
+        // 目标条目格式跟随传入 meta（导入路径 = SCHEMA_V3）；旧值兜底升到 V3
+        val fmt = realMetaSource.schemaVersion
+            .takeIf { it >= VaultMeta.SCHEMA_V2 }
+            ?: VaultMeta.SCHEMA_V3
 
         val peerPassword = CryptoEngine.randomHex(32)
         val peerSaltB64 = CryptoEngine.randomSaltB64()
         val peerKey = CryptoEngine.deriveKeyB64(peerPassword, peerSaltB64)
         val (peerVerify, peerVerifyIv) = CryptoEngine.makeVerify(peerKey)
-        val peerItems = encryptEntries(ShadowVaultGenerator.generate(realItems), peerKey)
+        val peerItems = ItemCipher.encryptEntries(ShadowVaultGenerator.generate(realItems), peerKey, fmt)
         peerKey.fill(0)
 
         // 双槽位原子提交：clearAll（覆盖语义）与双槽位四 key 的重建在**同一次** edit
@@ -986,7 +1164,7 @@ class VaultRepository(private val store: VaultStore) {
             write(
                 real,
                 meta = realMetaSource.copy(
-                    schemaVersion = VaultMeta.SCHEMA_V2,
+                    schemaVersion = fmt,
                     createdAt = createdAt,
                     auxSaltB64 = "",
                     auxSecretEnc = "",
@@ -1003,7 +1181,7 @@ class VaultRepository(private val store: VaultStore) {
                     pwdMode = realMetaSource.pwdMode,
                     createdAt = createdAt, // 与真库槽位同值
                     updatedAt = createdAt,
-                    schemaVersion = VaultMeta.SCHEMA_V2,
+                    schemaVersion = fmt,
                 ),
                 items = peerItems,
             )
@@ -1011,67 +1189,4 @@ class VaultRepository(private val store: VaultStore) {
     }
 
     // ---------------- 工具 ----------------
-
-    /** 明文条目 → 密文条目（用指定密钥；影子数据用影子槽位的密钥）。加密即算 Mac（四元组） */
-    private fun encryptEntries(entries: List<PlainEntry>, key: ByteArray): List<VaultItem> =
-        entries.map { e ->
-            val mk = CryptoEngine.macSubKey(key)
-            fun enc(s: String): Triple<String, String, String> =
-                if (s.isEmpty()) Triple("", "", "") else {
-                    val p = CryptoEngine.aesEncrypt(s, key)
-                    Triple(p.dataB64, p.ivB64, CryptoEngine.recordMac(mk, p.ivB64, p.dataB64))
-                }
-            val (aE, aI, aM) = enc(e.account)
-            val (sE, sI, sM) = enc(e.secret)
-            val (nE, nI, nM) = enc(e.note)
-            VaultItem(
-                id = e.id,
-                title = e.title,
-                category = e.category,
-                accountEnc = aE, accountIv = aI, accountMac = aM,
-                secretEnc = sE, secretIv = sI, secretMac = sM,
-                noteEnc = nE, noteIv = nI, noteMac = nM,
-                createdAt = e.createdAt,
-                updatedAt = e.updatedAt,
-            )
-        }
-
-    /**
-     * 用 oldKey 解密、newKey 重加密全部条目的四个密文字段（漏掉 totp 会改密后 2FA 不可恢复）。
-     * encrypt-then-MAC：重加密前**严格验旧 Mac**（带 Mac 且不符 → 中止整个操作，对齐
-     * 小程序 crypto.js:249-252 的从严语义），重加密后按 newKey 重算全部 Mac。
-     */
-    private fun reEncryptItems(items: List<VaultItem>, oldKey: ByteArray, newKey: ByteArray): List<VaultItem> {
-        val oldMk = CryptoEngine.macSubKey(oldKey)
-        val newMk = CryptoEngine.macSubKey(newKey)
-        return items.map { it ->
-            if (!CryptoEngine.verifyRecordMac(oldMk, it.accountIv, it.accountEnc, it.accountMac) ||
-                !CryptoEngine.verifyRecordMac(oldMk, it.secretIv, it.secretEnc, it.secretMac) ||
-                !CryptoEngine.verifyRecordMac(oldMk, it.noteIv, it.noteEnc, it.noteMac) ||
-                !CryptoEngine.verifyRecordMac(oldMk, it.totpIv, it.totpEnc, it.totpMac)
-            ) {
-                throw MacVerificationException()
-            }
-            fun re(enc: String, iv: String): Pair<String, String> =
-                if (enc.isBlank()) "" to "" else {
-                    val plain = CryptoEngine.aesDecrypt(CryptoEngine.EncPayload(iv, enc), oldKey)
-                    val p = CryptoEngine.aesEncrypt(plain, newKey)
-                    p.dataB64 to p.ivB64
-                }
-            val (aE, aI) = re(it.accountEnc, it.accountIv)
-            val (sE, sI) = re(it.secretEnc, it.secretIv)
-            val (nE, nI) = re(it.noteEnc, it.noteIv)
-            val (tE, tI) = re(it.totpEnc, it.totpIv)
-            it.copy(
-                accountEnc = aE, accountIv = aI,
-                secretEnc = sE, secretIv = sI,
-                noteEnc = nE, noteIv = nI,
-                totpEnc = tE, totpIv = tI,
-                accountMac = if (aE.isBlank()) "" else CryptoEngine.recordMac(newMk, aI, aE),
-                secretMac = if (sE.isBlank()) "" else CryptoEngine.recordMac(newMk, sI, sE),
-                noteMac = if (nE.isBlank()) "" else CryptoEngine.recordMac(newMk, nI, nE),
-                totpMac = if (tE.isBlank()) "" else CryptoEngine.recordMac(newMk, tI, tE),
-            )
-        }
-    }
 }

@@ -248,6 +248,11 @@ object BackupCodecV2 {
         } catch (e: BackupFormatException) {
             return e.message ?: "备份文件无效"
         }
+        return verifyFile(file, password)
+    }
+
+    /** 已解析文件的密码预检（导入流程 decodeAny 之后避免二次解析，直接验） */
+    fun verifyFile(file: BackupFileV2, password: String): String? {
         val key32 = try {
             key32Of(file, password)
         } catch (e: BackupFormatException) {
@@ -261,6 +266,17 @@ object BackupCodecV2 {
         } catch (_: Exception) {
             "备份校验失败，文件可能已损坏"
         }
+    }
+
+    /**
+     * 文件内 masterRef 对应的实际主密码（跨端导入重建本地金库用）。
+     * custom（masterRef=null）返回 null —— 密码只有用户知道，由调用方提供输入。
+     */
+    fun resolveDefaultMaster(file: BackupFileV2): String? = when (file.crypto.masterRef) {
+        null -> null
+        CryptoEngine.MASTER_REF_ANDROID -> CryptoEngine.ANDROID_DEFAULT_MASTER
+        CryptoEngine.MASTER_REF_WXB -> CryptoEngine.WXB_DEFAULT_PREFIX + (file.meta.openid ?: "")
+        else -> throw BackupFormatException("未知 masterRef（${file.crypto.masterRef}）")
     }
 
     // ---------------- v1/v2 统一分发 ----------------

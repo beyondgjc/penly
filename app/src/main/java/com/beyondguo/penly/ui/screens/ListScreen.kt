@@ -29,12 +29,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -77,11 +79,14 @@ private val INDEX_LABEL_SIZE = 20.dp
  */
 @Composable
 fun ListScreen(repo: VaultRepository, onOpen: (String) -> Unit, onSettings: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var items by remember { mutableStateOf<List<VaultItem>>(emptyList()) }
     var accounts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var keyword by rememberSaveable { mutableStateOf("") }
     var activeCat by rememberSaveable { mutableStateOf("全部") }
     var loaded by remember { mutableStateOf(false) }
+    // 存储格式迁移（v5.0）：解锁后检测到旧格式（CBC）时弹一次性确认框
+    var showMigrateDialog by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -95,6 +100,8 @@ fun ListScreen(repo: VaultRepository, onOpen: (String) -> Unit, onSettings: () -
             it.id to runCatching { repo.decryptAccount(it) }.getOrDefault("")
         }
         loaded = true
+        // 格式迁移检测放在列表加载后：弹窗出现时列表已可交互，迁移失败也不阻塞使用
+        if (repo.needsFormatMigration()) showMigrateDialog = true
     }
 
     val cats = remember(items) {
@@ -281,6 +288,51 @@ fun ListScreen(repo: VaultRepository, onOpen: (String) -> Unit, onSettings: () -
                 }
             }
         }
+    }
+
+    // ---- 存储格式迁移确认（契约 v2 §5：显式一次性，用户确认后才动手） ----
+    if (showMigrateDialog) {
+        var migrating by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { if (!migrating) showMigrateDialog = false },
+            title = { Text("升级加密格式") },
+            text = {
+                Text(
+                    "本机数据将升级为更强的加密格式（约 1-2 秒），主密码不变。\n\n" +
+                        "完成后旧的备份文件仍可导入，但建议重新导出一份新备份。",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !migrating,
+                    onClick = {
+                        scope.launch {
+                            migrating = true
+                            val err = repo.migrateStorageFormat()
+                            migrating = false
+                            showMigrateDialog = false
+                            if (err == null) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "加密格式已升级，建议尽快重新导出一份备份",
+                                    android.widget.Toast.LENGTH_LONG,
+                                ).show()
+                            } else {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    err,
+                                    android.widget.Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                        }
+                    },
+                ) { Text(if (migrating) "升级中..." else "立即升级") }
+            },
+            dismissButton = {
+                TextButton(enabled = !migrating, onClick = { showMigrateDialog = false }) { Text("稍后") }
+            },
+        )
     }
 }
 

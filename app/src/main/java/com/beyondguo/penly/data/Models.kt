@@ -67,7 +67,8 @@ data class VaultMeta(
         const val MODE_DEFAULT = "default"
 
         const val SCHEMA_V1 = 1 // 单槽位（legacy vault_meta / vault_items）
-        const val SCHEMA_V2 = 2 // 双槽位（vm_0/vi_0、vm_1/vi_1）
+        const val SCHEMA_V2 = 2 // 双槽位（vm_0/vi_0、vm_1/vi_1），条目 AES-256-CBC + MAC 四元组
+        const val SCHEMA_V3 = 3 // 双槽位，条目 AES-256-GCM 逐字段（v5.0 契约 v2 本机格式，见 ItemCipher）
     }
 }
 

@@ -100,6 +100,8 @@ fun SettingsScreen(
     var showAbout by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf("") }
     var exportSavedPath by remember { mutableStateOf<String?>(null) }
+    // 导出（契约 v2）：custom 模式需重输主密码（Argon2id 派生要明文，会话只存派生密钥）
+    var exportPwdDialog by remember { mutableStateOf(false) }
     // 剪贴板自动清除开关：初值读 AppPrefs 内存缓存（Application.onCreate 已订阅 DataStore）
     var clipboardClearOn by remember { mutableStateOf(AppPrefs.clipboardAutoClear) }
     // 系统自动填充启用状态（v3.0 项目⑤）：以系统真实状态为唯一事实源。
@@ -185,6 +187,21 @@ fun SettingsScreen(
     }
 
     val isDefault = meta?.pwdMode == VaultMeta.MODE_DEFAULT
+
+    // 导出（契约 v2）：default 模式用内置主密码直接导；custom 模式传入用户重输的主密码，
+    // 仓库层会先 verifyCurrentVaultPassword 校验，防止输错密码导出解不开的备份
+    fun doExport(masterPassword: String?) {
+        scope.launch {
+            try {
+                val json = repo.exportJson(masterPassword)
+                val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.CHINA).format(Date())
+                val name = "penly_backup_$stamp.json"
+                exportSavedPath = com.beyondguo.penly.util.writeToDownloads(context, name, json)
+            } catch (e: Exception) {
+                showToast(e.message ?: "导出失败")
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -366,20 +383,12 @@ fun SettingsScreen(
                     title = "导出数据",
                     subtitle = "保存加密备份 JSON 到手机「下载」目录",
                     onClick = {
-                        if (meta == null) {
-                            showToast("请先初始化印迹")
-                        } else {
-                            scope.launch {
-                                try {
-                                    val json = repo.exportJson()
-                                    val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.CHINA).format(Date())
-                                    val name = "penly_backup_$stamp.json"
-                                    val where = com.beyondguo.penly.util.writeToDownloads(context, name, json)
-                                    exportSavedPath = where
-                                } catch (e: Exception) {
-                                    showToast(e.message ?: "导出失败")
-                                }
-                            }
+                        when {
+                            meta == null -> showToast("请先初始化印迹")
+                            // default 模式：内置主密码可导，无需输入
+                            isDefault -> doExport(null)
+                            // custom 模式：Argon2id 需要明文主密码，先弹窗重输
+                            else -> exportPwdDialog = true
                         }
                     },
                 )
@@ -626,7 +635,7 @@ fun SettingsScreen(
                                 return@launch
                             }
                             try {
-                                val r = repo.importJson(text)
+                                val r = repo.importJson(text, importPwd)
                                 pendingImport = null
                                 importing = false
                                 when (r.type) {
@@ -648,6 +657,50 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { if (!importing) pendingImport = null }) { Text("取消") }
             },
+        )
+    }
+
+    // ---- 导出密码确认（custom 模式）：重输主密码，仓库层先验证再导出 ----
+    if (exportPwdDialog) {
+        var exportPwd by rememberSaveable { mutableStateOf("") }
+        var exportError by rememberSaveable { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { exportPwdDialog = false },
+            title = { Text("输入主密码") },
+            text = {
+                Column {
+                    Text(
+                        "导出前请输入当前主密码验证，避免输错密码导出一份自己都解不开的备份。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = exportPwd,
+                        onValueChange = { exportPwd = it; exportError = "" },
+                        label = { Text("主密码") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    )
+                    if (exportError.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(exportError, color = PenDanger, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (exportPwd.isEmpty()) {
+                            exportError = "请输入主密码"
+                            return@TextButton
+                        }
+                        exportPwdDialog = false
+                        doExport(exportPwd)
+                    },
+                ) { Text("导出") }
+            },
+            dismissButton = { TextButton(onClick = { exportPwdDialog = false }) { Text("取消") } },
         )
     }
 

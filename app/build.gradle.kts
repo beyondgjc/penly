@@ -64,6 +64,14 @@ android {
             testProguardFiles("proguard-test-rules.pro")
         }
     }
+    packaging {
+        resources {
+            // bcprov（Argon2id KDF 依赖）与 jspecify 的 OSGI 元数据在
+            // META-INF/versions/9/OSGI-INF/MANIFEST.MF 撞路径；OSGI 清单在
+            // Android 运行时无用，排除即可（打 APK 时 mergeJavaRes 才会触发）
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
