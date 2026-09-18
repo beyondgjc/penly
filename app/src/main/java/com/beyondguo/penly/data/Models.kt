@@ -117,6 +117,30 @@ data class VaultItem(
     @SerialName("updatedAt") val updatedAt: Long = 0,
 )
 
+/**
+ * v2 条目（契约 v2，《印迹_跨端契约v2_地基工程.md》§1-§3）：
+ * - `*Enc` = base64( nonce(12B) || ciphertext || tag(16B) )，GCM 载荷自带 nonce → **无 `*Iv` 字段**
+ * - 完整性由 GCM tag（防篡改）+ AAD=`字段名|条目id`（防搬移）接管 → **无 `*Mac` 字段**
+ * - 空串 `*Enc` = 该字段无内容（约定：不加密空串）
+ * - 明文字段与 v1 [VaultItem] 逐字对齐（title/category/totp 参数/appPackage/时间戳）
+ */
+@Serializable
+data class VaultItemV2(
+    @SerialName("_id") val id: String,
+    @SerialName("title") val title: String = "",
+    @SerialName("category") val category: String = "",
+    @SerialName("accountEnc") val accountEnc: String = "",
+    @SerialName("secretEnc") val secretEnc: String = "",
+    @SerialName("noteEnc") val noteEnc: String = "",
+    @SerialName("totpEnc") val totpEnc: String = "",
+    @SerialName("totpDigits") val totpDigits: Int = 0,
+    @SerialName("totpPeriod") val totpPeriod: Int = 0,
+    @SerialName("totpAlgo") val totpAlgo: String = "",
+    @SerialName("appPackage") val appPackage: String = "",
+    @SerialName("createdAt") val createdAt: Long = 0,
+    @SerialName("updatedAt") val updatedAt: Long = 0,
+)
+
 /** 解密后的条目（仅存在于内存/界面层，绝不持久化） */
 data class PlainEntry(
     val id: String,
