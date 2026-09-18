@@ -37,6 +37,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.beyondguo.penly.bio.BioManager
+import com.beyondguo.penly.data.UnlockResult
 import com.beyondguo.penly.data.VaultRepository
 import com.beyondguo.penly.ui.components.ConfirmDialog
 import com.beyondguo.penly.ui.theme.PenDanger
@@ -63,8 +64,19 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
     var error by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var showReset by remember { mutableStateOf(false) }
+    // TEE 信封失效（换机/恢复出厂/密钥被删）：密码对也解不开，唯一出路 = 重置 + 备份恢复
+    var showKeyUnavailable by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { requiresPwd = repo.requiresPassword() }
+
+    /** 重置本机数据（TEE 失效恢复 / 忘记主密码）——重置后从备份文件导入 */
+    fun resetAndRecover() {
+        scope.launch {
+            BioManager.clear(context)
+            repo.resetVault()
+            onVaultChanged()
+        }
+    }
 
     fun bioUnlock() {
         val fa = activity ?: return
@@ -73,9 +85,13 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
             fa,
             onMaster = { m ->
                 scope.launch {
-                    if (!repo.unlock(m)) {
-                        BioManager.clear(context)
-                        error = "本地凭证已失效，请手动解锁"
+                    when (repo.unlock(m)) {
+                        UnlockResult.Success -> {}
+                        UnlockResult.KeyUnavailable -> showKeyUnavailable = true
+                        UnlockResult.WrongPassword -> {
+                            BioManager.clear(context)
+                            error = "本地凭证已失效，请手动解锁"
+                        }
                     }
                 }
             },
@@ -110,9 +126,12 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
     fun unlockWith(m: String) {
         busy = true
         scope.launch {
-            val ok = repo.unlock(m)
+            when (repo.unlock(m)) {
+                UnlockResult.Success -> {}
+                UnlockResult.WrongPassword -> error = "主密码错误"
+                UnlockResult.KeyUnavailable -> showKeyUnavailable = true
+            }
             busy = false
-            if (!ok) error = "主密码错误"
         }
     }
 
@@ -137,7 +156,10 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
                 onClick = {
                     busy = true
                     scope.launch {
-                        repo.unlockDefault()
+                        // default 库启用信封后同样可能 TEE 失效，需走降级流程
+                        if (repo.unlockDefault() == UnlockResult.KeyUnavailable) {
+                            showKeyUnavailable = true
+                        }
                         busy = false
                     }
                 },
@@ -194,13 +216,24 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
             danger = true,
             onConfirm = {
                 showReset = false
-                scope.launch {
-                    BioManager.clear(context)
-                    repo.resetVault()
-                    onVaultChanged()
-                }
+                resetAndRecover()
             },
             onDismiss = { showReset = false },
+        )
+    }
+
+    if (showKeyUnavailable) {
+        ConfirmDialog(
+            title = "设备保护密钥已失效",
+            text = "本机数据受设备安全芯片保护，该密钥已失效（换机或恢复出厂会出现此情况），" +
+                "数据无法在本机解锁。\n\n请重置印迹后，使用之前导出的备份文件恢复数据。",
+            confirmText = "重置并恢复",
+            danger = true,
+            onConfirm = {
+                showKeyUnavailable = false
+                resetAndRecover()
+            },
+            onDismiss = { showKeyUnavailable = false },
         )
     }
 }

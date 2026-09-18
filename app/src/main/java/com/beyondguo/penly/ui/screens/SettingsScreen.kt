@@ -372,6 +372,8 @@ fun SettingsScreen(
                 )
             }
 
+            EnvelopeSection(repo)
+
             SectionTitle("数据")
             SettingCard {
                 SettingRow(

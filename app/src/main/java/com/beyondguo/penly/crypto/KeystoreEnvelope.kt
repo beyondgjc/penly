@@ -1,6 +1,20 @@
 package com.beyondguo.penly.crypto
 
 import java.security.SecureRandom
+import kotlinx.serialization.Serializable
+
+/**
+ * 信封外层失败：主密码错误（或 payload 被篡改——同为密码因素层失败）。
+ * 解锁 UI 据此走「密码错误」普通重试路径。
+ */
+class WrongPasswordException(message: String = "主密码错误") : Exception(message)
+
+/**
+ * 设备因素失败：TEE 密钥不可用（换机/恢复出厂/系统删除密钥）。
+ * outer 已解开（密码因素成立），失败必然在设备层——此时信封永久不可解，
+ * 唯一出路 = 从备份恢复。解锁 UI 据此走专用降级流程，绝不与「密码错误」混淆。
+ */
+class KeyUnavailableException(message: String = "设备安全密钥不可用，需从备份恢复") : Exception(message)
 
 /**
  * key32 的本机 TEE 信封（v5.0 地基工程，《印迹_跨端契约v2_地基工程.md》§4）。
@@ -27,6 +41,7 @@ object KeystoreEnvelope {
     private const val KEK_ITERATIONS = 3
     private const val KEK_PARALLELISM = 1
 
+    @Serializable
     data class Envelope(
         val saltLocalB64: String,   // Argon2id 本机盐（独立于契约层盐）
         val payloadB64: String,     // 外层：KEK 解出的内层信封（nonce||ct||tag）
@@ -58,11 +73,10 @@ object KeystoreEnvelope {
     }
 
     /**
-     * 双层解封。失败语义：
-     * - 主密码错误 → outer 的 GCM tag 失败 → [CryptoV2.IntegrityException]（「密码错误」）
-     * - TEE 密钥失效（换机/恢复出厂）→ KeyPermanentlyInvalidatedException 等
-     *   由 [KeyWrapper] 透传 —— 语义为「走备份恢复」，调用方必须与「密码错误」区分
-     * - 信封被篡改 → IntegrityException
+     * 双层解封。失败语义（两段分层抛出，调用方必须区分）：
+     * - 主密码错误（或 payload 被篡改）→ outer GCM tag 失败 → [WrongPasswordException]
+     * - TEE 密钥失效（换机/恢复出厂/密钥被删）→ [KeyWrapper] 抛出的任何异常
+     *   统一转 [KeyUnavailableException] —— 语义为「走备份恢复」
      */
     fun unseal(wrapper: KeyWrapper, masterPassword: ByteArray, envelope: Envelope): ByteArray {
         val kek = CryptoV2.argon2id(
@@ -72,11 +86,23 @@ object KeystoreEnvelope {
             iterations = KEK_ITERATIONS,
             parallelism = KEK_PARALLELISM,
         )
-        val inner = CryptoV2.gcmDecrypt(
-            kek,
-            CryptoV2.unb64(envelope.payloadB64),
-            AAD_OUTER,
-        )
-        return wrapper.unwrap(inner, AAD_INNER)
+        val inner = try {
+            CryptoV2.gcmDecrypt(
+                kek,
+                CryptoV2.unb64(envelope.payloadB64),
+                AAD_OUTER,
+            )
+        } catch (e: CryptoV2.IntegrityException) {
+            throw WrongPasswordException()
+        }
+        return try {
+            wrapper.unwrap(inner, AAD_INNER)
+        } catch (e: KeyUnavailableException) {
+            throw e
+        } catch (e: Exception) {
+            // 走到这里说明 outer 已解开（密码因素成立），失败必然在设备因素层：
+            // KeyPermanentlyInvalidatedException / KeyStore 无此密钥 / GCM tag 不符等
+            throw KeyUnavailableException()
+        }
     }
 }

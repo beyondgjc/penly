@@ -37,22 +37,39 @@ class KeystoreEnvelopeTest {
     }
 
     @Test
-    fun `wrong password rejected`() {
+    fun `wrong password rejected as wrongPasswordException`() {
         val envelope = KeystoreEnvelope.seal(SoftwareWrapper(), password, key32)
         val wrong = "wrong-password".toByteArray()
-        assertThrows(CryptoV2.IntegrityException::class.java) {
+        assertThrows(WrongPasswordException::class.java) {
             KeystoreEnvelope.unseal(SoftwareWrapper(), wrong, envelope)
         }
     }
 
     @Test
-    fun `envelope tamper rejected`() {
+    fun `envelope tamper rejected as wrongPasswordException`() {
+        // payload 篡改 = outer 层（密码因素）GCM tag 失败，与密码错误同路出——不向 UI 泄露「被篡改」细节
         val envelope = KeystoreEnvelope.seal(SoftwareWrapper(), password, key32)
         val payload = CryptoV2.unb64(envelope.payloadB64).copyOf()
         payload[payload.size - 2] = (payload[payload.size - 2].toInt() xor 1).toByte()
         val tampered = envelope.copy(payloadB64 = CryptoV2.b64(payload))
-        assertThrows(CryptoV2.IntegrityException::class.java) {
+        assertThrows(WrongPasswordException::class.java) {
             KeystoreEnvelope.unseal(SoftwareWrapper(), password, tampered)
+        }
+    }
+
+    @Test
+    fun `tee failure surfaces as key unavailable`() {
+        // 设备因素层失效（换机/恢复出厂/密钥被删）：密码正确、outer 可解，inner unwrap 必败
+        val brokenWrapper = object : KeyWrapper {
+            override val tag: String = "broken"
+            override fun wrap(plaintext: ByteArray, aad: ByteArray): ByteArray =
+                CryptoV2.gcmEncrypt(ByteArray(32) { 0x5a }, plaintext, aad)
+            override fun unwrap(payload: ByteArray, aad: ByteArray): ByteArray =
+                throw IllegalStateException("KeyPermanentlyInvalidatedException (simulated)")
+        }
+        val envelope = KeystoreEnvelope.seal(brokenWrapper, password, key32)
+        assertThrows(KeyUnavailableException::class.java) {
+            KeystoreEnvelope.unseal(brokenWrapper, password, envelope)
         }
     }
 

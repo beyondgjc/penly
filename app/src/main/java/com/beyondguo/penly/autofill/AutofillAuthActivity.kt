@@ -119,10 +119,16 @@ class AutofillAuthActivity : FragmentActivity() {
                     busy = true
                     error = ""
                     scope.launch {
-                        val ok = if (requiresPwd == false) repo.unlockDefault() else {
-                            m?.let { repo.unlock(it) } == true
+                        val result = if (requiresPwd == false) repo.unlockDefault() else {
+                            m?.let { repo.unlock(it) } ?: com.beyondguo.penly.data.UnlockResult.WrongPassword
                         }
-                        if (!ok) {
+                        if (result == com.beyondguo.penly.data.UnlockResult.KeyUnavailable) {
+                            busy = false
+                            error = "设备保护密钥已失效，请打开印迹按提示恢复"
+                            showUi = true
+                            return@launch
+                        }
+                        if (result != com.beyondguo.penly.data.UnlockResult.Success) {
                             busy = false
                             error = "解锁失败，请重试"
                             showUi = true

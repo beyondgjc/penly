@@ -9,8 +9,13 @@ import com.beyondguo.penly.backup.BackupFile
 import com.beyondguo.penly.backup.BackupFormatException
 import com.beyondguo.penly.crypto.CryptoEngine
 import com.beyondguo.penly.crypto.CryptoV2
+import com.beyondguo.penly.crypto.KeyUnavailableException
+import com.beyondguo.penly.crypto.KeyWrapper
+import com.beyondguo.penly.crypto.KeystoreEnvelope
+import com.beyondguo.penly.crypto.AndroidKeyStoreWrapper
 import com.beyondguo.penly.crypto.MacVerificationException
 import com.beyondguo.penly.crypto.SessionManager
+import com.beyondguo.penly.crypto.WrongPasswordException
 import com.beyondguo.penly.search.Embedder
 import com.beyondguo.penly.search.EmbedderFactory
 import com.beyondguo.penly.search.NoopEmbedder
@@ -39,6 +44,19 @@ object ImportType {
 data class ImportResult(val type: String, val count: Int)
 
 /**
+ * 解锁结果（v5.0 TEE 信封起三分）：
+ * - [Success]：会话已建立；
+ * - [WrongPassword]：密码因素层失败（密码错误或数据被篡改）——普通重试路径；
+ * - [KeyUnavailable]：设备因素层失败（换机/恢复出厂/TEE 密钥被删）——信封永久不可解，
+ *   唯一出路 = 备份恢复，UI 必须走专用降级对话框，绝不与「密码错误」混淆。
+ */
+sealed class UnlockResult {
+    data object Success : UnlockResult()
+    data object WrongPassword : UnlockResult()
+    data object KeyUnavailable : UnlockResult()
+}
+
+/**
  * 印迹业务仓库（对应小程序 services/vault.js + 部分 utils/crypto.js 业务封装）。
  * 所有读写只接触密文；明文与密钥仅在会话内存中。
  *
@@ -61,6 +79,12 @@ data class ImportResult(val type: String, val count: Int)
 class VaultRepository(private val store: VaultStore) {
 
     val unlocked get() = SessionManager.unlocked
+
+    /**
+     * TEE 信封包装器（v5.0 #30）：生产实现为 AndroidKeyStore（TEE/StrongBox），
+     * wrapKey 生成于硬件内、永不导出。信封未启用时本字段不被触碰。
+     */
+    private val keyWrapper: KeyWrapper by lazy { AndroidKeyStoreWrapper(store.appContext) }
 
     private companion object {
         /** 空槽位派生用的固定 salt：让"空槽位"也走一次完整 PBKDF2，保证分支形状一致 */
@@ -225,11 +249,13 @@ class VaultRepository(private val store: VaultStore) {
      * 完成才判定结果。绝不能"先试 A、成功就返回" —— 那样真密码耗时 1 次派生、
      * 应急密码耗时 2 次，掐表即可分辨，duress 当场破功。
      */
-    suspend fun unlock(master: String): Boolean = coroutineScope {
+    suspend fun unlock(master: String): UnlockResult = coroutineScope {
         val jobA = async(Dispatchers.Default) { tryUnlock(Slot.A, master) }
         val jobB = async(Dispatchers.Default) { tryUnlock(Slot.B, master) }
-        val keyA = jobA.await() // 不得短路：两路都必须跑完
-        val keyB = jobB.await()
+        val a = jobA.await() // 不得短路：两路都必须跑完
+        val b = jobB.await()
+        val keyA = a.key
+        val keyB = b.key
         val hit: Pair<Slot, ByteArray>? = if (keyA != null && keyB != null) {
             // 两槽位被同一个密码解开 = 主密码与应急密码相同（异常状态）。
             // 必须挑出主库槽位：若固定选 A，真库在 B 时用户就被送进影子库，
@@ -244,16 +270,28 @@ class VaultRepository(private val store: VaultStore) {
         } else {
             null
         }
-        val target = hit ?: return@coroutineScope false
-        SessionManager.establish(target.second, target.first)
-        primaryCache = null
+        val target = hit ?: run {
+            // 两路皆空：区分密码错误与设备因素失效（信封启用后的 TEE 失效走降级流程）
+            return@coroutineScope if (a.deviceFactorFailed || b.deviceFactorFailed) {
+                UnlockResult.KeyUnavailable
+            } else {
+                UnlockResult.WrongPassword
+            }
+        }
+        // 补建必须在 establish **之前**完成：establish 后 UI 立即开始读库
+        // （needsFormatMigration → isPrimaryCached），若 aux 尚未落盘（导入后
+        // 首次解锁的场景），瞬态 false 会被会话缓存污染，此后改密/设应急密码/
+        // 启用信封等主库操作全部静默失效——「导入后变成影子库」的根因。
+        // 补建完成后再建立会话，竞态窗口不复存在。
         withContext(Dispatchers.Default) {
             ensureAuxProvisioned(target.first, target.second)
         }
+        SessionManager.establish(target.second, target.first)
+        primaryCache = null
         // 检索引擎懒加载（首次解锁时装载 ~24MB 模型）+ 索引后台重建：
         // 走独立 scope，**不阻塞 unlock 返回**；失败自动降级 Noop（纯关键词检索）
         ensureSemanticEngineAsync()
-        true
+        UnlockResult.Success
     }
 
     /** 检索后台任务 scope：SupervisorJob，任务失败不影响其它任务与解锁主链路 */
@@ -277,15 +315,41 @@ class VaultRepository(private val store: VaultStore) {
         }
     }
 
-    /** 尝试用 [master] 解开 [slot]；空槽位也会走一次完整派生以保证耗时一致 */
-    private suspend fun tryUnlock(slot: Slot, master: String): ByteArray? {
+    /**
+     * 单槽位解锁尝试结果：[key] 非 null 即解开；[deviceFactorFailed] 标记该槽位
+     * 信封的 TEE 层失效（密码因素成立但设备密钥不可用）——两槽位任一标记即触发
+     * 解锁降级路径。
+     */
+    private class TryOutcome(val key: ByteArray?, val deviceFactorFailed: Boolean = false)
+
+    /**
+     * 尝试用 [master] 解开 [slot]。
+     *
+     * 双格式分派（v5.0 #30）：
+     * - 信封存在 → **唯一门禁 = [KeystoreEnvelope.unseal]**（Argon2id 64MiB + TEE 双因素）。
+     *   PBKDF2 verify 链此时退为槽位间内部校验，不再参与解锁判定——否则双锁并存、
+     *   弱锁照用，信封的离线防护形同虚设。
+     * - 信封缺失（未启用/存量库）→ 原 PBKDF2 + verifyMaster 链，行为与 v4 完全一致。
+     * 空槽位保持完整派生形状（信封启用后两槽位必然同构，该分支只在未启用时可达）。
+     */
+    private suspend fun tryUnlock(slot: Slot, master: String): TryOutcome {
+        val env = store.readEnvelope(slot)
+        if (env != null) {
+            return try {
+                TryOutcome(KeystoreEnvelope.unseal(keyWrapper, master.toByteArray(Charsets.UTF_8), env))
+            } catch (e: WrongPasswordException) {
+                TryOutcome(null)
+            } catch (e: KeyUnavailableException) {
+                TryOutcome(null, deviceFactorFailed = true)
+            }
+        }
         val m = store.readMeta(slot)
         val saltB64 = m?.saltB64 ?: DUMMY_SALT_B64
         val key = CryptoEngine.deriveKeyB64(master, saltB64)
         val ok = m != null && CryptoEngine.verifyMaster(key, m.verifyB64, m.verifyIvB64)
-        if (ok) return key
+        if (ok) return TryOutcome(key)
         key.fill(0)
-        return null
+        return TryOutcome(null)
     }
 
     /**
@@ -299,9 +363,9 @@ class VaultRepository(private val store: VaultStore) {
         val jobB = async(Dispatchers.Default) { tryUnlock(Slot.B, master) }
         val keyA = jobA.await() // 不得短路
         val keyB = jobB.await()
-        val ok = keyA != null || keyB != null
-        keyA?.fill(0)
-        keyB?.fill(0)
+        val ok = keyA.key != null || keyB.key != null
+        keyA.key?.fill(0)
+        keyB.key?.fill(0)
         ok
     }
 
@@ -314,16 +378,79 @@ class VaultRepository(private val store: VaultStore) {
      */
     suspend fun verifyCurrentVaultPassword(master: String): Boolean {
         val slot = SessionManager.activeSlotOrNull() ?: return false
-        val key = withContext(Dispatchers.Default) { tryUnlock(slot, master) }
-        val ok = key != null
-        key?.fill(0)
+        // 信封启用时本函数走 unseal 链；TEE 中途失效的边缘态按「验证失败」处理
+        //（此时会话本身早已建立过，设备因素已被证明，极小概率不必向上传播）
+        val outcome = withContext(Dispatchers.Default) { tryUnlock(slot, master) }
+        val ok = outcome.key != null
+        outcome.key?.fill(0)
         return ok
     }
 
-    /** default 模式一键解锁（内置默认主密码） */
-    suspend fun unlockDefault(): Boolean {
-        if (requiresPassword()) return false
+    /** default 模式一键解锁（内置默认主密码）；default 库启用信封后同样可能 KeyUnavailable */
+    suspend fun unlockDefault(): UnlockResult {
+        if (requiresPassword()) return UnlockResult.WrongPassword
         return unlock(CryptoEngine.ANDROID_DEFAULT_MASTER)
+    }
+
+    // ---------------- TEE 信封（v5.0 #30：硬件级保护，显式启用） ----------------
+
+    /** 当前会话槽位是否已启用信封（启用时两槽位成对写入，正常态两边一致） */
+    suspend fun envelopeEnabled(): Boolean {
+        val slot = SessionManager.activeSlotOrNull() ?: return false
+        return store.readEnvelope(slot) != null
+    }
+
+    /** 最近一次成功导出备份的时间戳；0 = 从未导出（备份前置检查依据） */
+    suspend fun lastExportAt(): Long = store.readLastExportAt()
+
+    /** 导出成功后调用，供「启用信封前必须已有备份」前置检查 */
+    suspend fun markExported() = store.setLastExportAt(System.currentTimeMillis())
+
+    /**
+     * 启用 TEE 信封（显式一次性动作，仅主库会话）：
+     * 1. [verifyCurrentVaultPassword] 门禁（此刻信封未启用，走 PBKDF2 旧链验证）；
+     * 2. 真库信封 = seal(主密码, 会话 key32)；影子信封 = seal(aux 秘密, 影子 key32)——
+     *    aux 秘密即应急密码（或无人知晓的占位随机密码），因此应急密码解锁影子
+     *    同样获得双因素防护，两槽位磁盘结构保持同构（不可证伪性不破）；
+     * 3. [VaultStore.commitSlots] 原子写入双槽位信封——中途任何失败，磁盘保持
+     *    「未启用」原状，下次重来即可。
+     *
+     * ⚠️ 启用即生效的失效语义（UI 必须前置告知）：换机/恢复出厂 → TEE wrapKey 销毁 →
+     * 信封永久不可解 → 唯一出路 = 备份恢复。这正是启用前强制「已导出备份」检查的原因。
+     */
+    suspend fun enableEnvelope(master: String): String? = withContext(Dispatchers.Default) {
+        if (!isPrimaryCached()) return@withContext null // 影子会话静默 noop（中性，不暴露影子库）
+        val slot = SessionManager.activeSlotOrNull() ?: return@withContext "印迹未解锁"
+        val key32 = SessionManager.requireKey()
+        if (!verifyCurrentVaultPassword(master)) return@withContext "主密码错误"
+        val m = store.readMeta(slot) ?: return@withContext "印迹尚未初始化"
+        val peerMeta = store.readMeta(slot.other()) ?: return@withContext "印迹尚未初始化"
+
+        val auxSecret = readAuxSecret(m, key32) ?: return@withContext "辅助凭证缺失，无法启用"
+        val peerKey = CryptoEngine.deriveKeyB64(auxSecret, peerMeta.saltB64)
+        val envReal = KeystoreEnvelope.seal(keyWrapper, master.toByteArray(Charsets.UTF_8), key32)
+        val envPeer = KeystoreEnvelope.seal(keyWrapper, auxSecret.toByteArray(Charsets.UTF_8), peerKey)
+        peerKey.fill(0)
+
+        store.commitSlots {
+            write(slot, envelope = envReal)
+            write(slot.other(), envelope = envPeer)
+        }
+        null
+    }
+
+    /**
+     * 关闭信封：门禁回落 PBKDF2 旧链。key32 与条目数据零影响（key 从未变过）。
+     * 仅主库会话；双槽位同事务删除，保持结构对称。
+     */
+    suspend fun disableEnvelope(): String? = withContext(Dispatchers.Default) {
+        if (!isPrimaryCached()) return@withContext null
+        val slot = SessionManager.activeSlotOrNull() ?: return@withContext "印迹未解锁"
+        store.commitSlots {
+            dropEnvelope(slot)
+            dropEnvelope(slot.other())
+        }
+        null
     }
 
     /** Autofill 匹配索引条目：仅含非敏感明文（标题），不含任何密文字段 */
@@ -434,7 +561,15 @@ class VaultRepository(private val store: VaultStore) {
         }
         primaryCache?.let { return it }
         val v = isPrimary()
-        primaryCache = v
+        // false 有两种语义：影子会话（真 false，可缓存至本会话结束）与 aux 未就绪
+        // （导入后等补建的**瞬态** false——不可缓存，否则补建完成后仍被旧值卡住，
+        // 主库操作全部静默失效）。仅当 aux 已就绪时才允许缓存 false。
+        if (v) {
+            primaryCache = true
+        } else {
+            val m = SessionManager.activeSlotOrNull()?.let { store.readMeta(it) }
+            if (m != null && m.auxSecretEnc.isNotBlank()) primaryCache = false
+        }
         return v
     }
 
@@ -834,6 +969,13 @@ class VaultRepository(private val store: VaultStore) {
             val ts = System.currentTimeMillis()
 
             val auxEnc = auxSecret?.let { CryptoEngine.aesEncrypt(it, newKey) }
+            // 信封已启用：改密必须同步重封真库信封（同一次原子事务）——否则旧密码
+            // 派生的 KEK 仍能解开信封，改密等于没改。影子信封不动（影子密码没变）。
+            val envNew = if (store.readEnvelope(slot) != null) {
+                KeystoreEnvelope.seal(keyWrapper, newPlain.toByteArray(Charsets.UTF_8), newKey)
+            } else {
+                null
+            }
             val slotMeta = m.copy(
                 saltB64 = newSaltB64,
                 verifyB64 = newVerify,
@@ -856,7 +998,7 @@ class VaultRepository(private val store: VaultStore) {
             // 「items 已重加密而 meta（新 salt）未写」的半状态：那会让唯一可用的
             // 密码永久失效、全部数据不可解密（P0 失效窗口①的根治）。
             store.commitSlots {
-                write(slot, meta = slotMeta, items = reEnc)
+                write(slot, meta = slotMeta, items = reEnc, envelope = envNew)
                 peerMeta?.let { write(peer, meta = it) }
             }
             SessionManager.establish(newKey, slot) // 槽位不变

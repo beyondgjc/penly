@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.beyondguo.penly.crypto.KeystoreEnvelope
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -33,6 +34,13 @@ class VaultStore(private val context: Context) {
         // v2 双槽位：key 名无语义
         fun metaKey(slot: Slot) = stringPreferencesKey("vm_${slot.index}")
         fun itemsKey(slot: Slot) = stringPreferencesKey("vi_${slot.index}")
+
+        // v5.0 TEE 信封：每槽位一份（ve_<slot>），缺 key = 未启用信封（解锁回落 PBKDF2 旧链）。
+        // 键名同样无语义（ve_ 不暗示任何主次），两槽位在启用时**成对**写入，保持不可证伪性。
+        fun envelopeKey(slot: Slot) = stringPreferencesKey("ve_${slot.index}")
+
+        // 最近一次成功导出备份的时间戳（备份前置检查：启用信封前必须有已导出备份）
+        val LAST_EXPORT_KEY = stringPreferencesKey("last_export_at")
 
         // v1 单槽位：仅迁移期读取，迁移完成后删除
         val LEGACY_META_KEY = stringPreferencesKey("vault_meta")
@@ -83,13 +91,44 @@ class VaultStore(private val context: Context) {
         writeItems(slot, readItems(slot).filterNot { it.id == id })
     }
 
+    // ---------------- v5.0 TEE 信封 ----------------
+
+    /** 读取槽位信封；null = 未启用信封（该槽位解锁走 PBKDF2 旧链） */
+    suspend fun readEnvelope(slot: Slot): KeystoreEnvelope.Envelope? {
+        val raw = context.penlyDataStore.data.first()[envelopeKey(slot)] ?: return null
+        return try {
+            json.decodeFromString(KeystoreEnvelope.Envelope.serializer(), raw)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** 信封独立写入（enableEnvelope 之外的场景一般不该用——信封变更必须进 commitSlots 事务） */
+    suspend fun writeEnvelope(slot: Slot, envelope: KeystoreEnvelope.Envelope?) {
+        context.penlyDataStore.edit { p ->
+            if (envelope == null) p.remove(envelopeKey(slot))
+            else p[envelopeKey(slot)] = json.encodeToString(KeystoreEnvelope.Envelope.serializer(), envelope)
+        }
+    }
+
+    // ---------------- 备份前置检查 ----------------
+
+    suspend fun readLastExportAt(): Long =
+        context.penlyDataStore.data.first()[LAST_EXPORT_KEY]?.toLongOrNull() ?: 0L
+
+    suspend fun setLastExportAt(ts: Long) {
+        context.penlyDataStore.edit { p -> p[LAST_EXPORT_KEY] = ts.toString() }
+    }
+
     /** 清空两个槽位与 legacy 残留 */
     suspend fun clearAll() {
         context.penlyDataStore.edit { p ->
             p.remove(metaKey(Slot.A))
             p.remove(itemsKey(Slot.A))
+            p.remove(envelopeKey(Slot.A))
             p.remove(metaKey(Slot.B))
             p.remove(itemsKey(Slot.B))
+            p.remove(envelopeKey(Slot.B))
             p.remove(LEGACY_META_KEY)
             p.remove(LEGACY_ITEMS_KEY)
         }
@@ -136,12 +175,14 @@ class VaultStore(private val context: Context) {
     // 与「合法影子槽位」在磁盘上不可区分，任何事后检测自愈都不可行，只能靠原子写。
 
     /**
-     * 槽位写入载荷：JSON 已序列化的 meta / items。
-     * null 表示**不改动**该 key（非删除）；单槽位至少要写一项。
+     * 槽位写入载荷：JSON 已序列化的 meta / items / envelope。
+     * null 表示**不改动**该 key（非删除）；单槽位至少要写一项或显式声明 drop。
      */
     class SlotWrite internal constructor(
         internal val metaJson: String?,
         internal val itemsJson: String?,
+        internal val envelopeJson: String?,
+        internal val dropEnvelope: Boolean,
     )
 
     /**
@@ -157,19 +198,41 @@ class VaultStore(private val context: Context) {
         internal var resetAllFlag = false
         internal var dropLegacyFlag = false
 
-        /** 写一个槽位：meta / items 至少给一个；同槽位重复 write 直接拒绝（防部分声明被静默覆盖） */
-        fun write(slot: Slot, meta: VaultMeta? = null, items: List<VaultItem>? = null) {
-            require(meta != null || items != null) { "write(${slot.name}) 的 meta 与 items 不能同时为空" }
+        /**
+         * 写一个槽位：meta / items / envelope 至少给一个（或另行声明 [dropEnvelope]）；
+         * 同槽位重复声明直接拒绝（防部分声明被静默覆盖）。
+         * [envelope] 为 null 表示**不改动**该槽位信封 key；写信封请显式传值。
+         */
+        fun write(
+            slot: Slot,
+            meta: VaultMeta? = null,
+            items: List<VaultItem>? = null,
+            envelope: KeystoreEnvelope.Envelope? = null,
+        ) {
+            require(meta != null || items != null || envelope != null) {
+                "write(${slot.name}) 的 meta / items / envelope 不能同时为空"
+            }
             require(slot !in writes) {
                 "槽位 ${slot.name} 已声明写入：重复 write 会整体覆盖先前声明" +
                     "（第二次只给 meta 会静默丢掉已声明的 items）——如需组合请一次给全"
             }
             val metaJson = meta?.let { json.encodeToString(VaultMeta.serializer(), it) }
             val itemsJson = items?.let { json.encodeToString(ListSerializer(VaultItem.serializer()), it) }
-            writes[slot] = SlotWrite(metaJson, itemsJson)
+            val envJson = envelope?.let { json.encodeToString(KeystoreEnvelope.Envelope.serializer(), it) }
+            writes[slot] = SlotWrite(metaJson, itemsJson, envJson, dropEnvelope = false)
         }
 
-        /** 同事务先移除全部双槽位四 key（初始化/导入的「从零重建」语义） */
+        /** 同事务删除槽位信封（disableEnvelope：门禁回落 PBKDF2 旧链，条目数据零影响） */
+        fun dropEnvelope(slot: Slot) {
+            if (slot in writes) {
+                val w = writes.getValue(slot)
+                writes[slot] = SlotWrite(w.metaJson, w.itemsJson, null, true)
+            } else {
+                writes[slot] = SlotWrite(null, null, null, true)
+            }
+        }
+
+        /** 同事务先移除全部双槽位四 key 与信封（初始化/导入的「从零重建」语义） */
         fun resetAll() {
             resetAllFlag = true
         }
@@ -194,12 +257,16 @@ class VaultStore(private val context: Context) {
             if (p.resetAllFlag) {
                 prefs.remove(metaKey(Slot.A))
                 prefs.remove(itemsKey(Slot.A))
+                prefs.remove(envelopeKey(Slot.A))
                 prefs.remove(metaKey(Slot.B))
                 prefs.remove(itemsKey(Slot.B))
+                prefs.remove(envelopeKey(Slot.B))
             }
             p.writes.forEach { (slot, w) ->
                 w.metaJson?.let { prefs[metaKey(slot)] = it }
                 w.itemsJson?.let { prefs[itemsKey(slot)] = it }
+                if (w.dropEnvelope) prefs.remove(envelopeKey(slot))
+                else w.envelopeJson?.let { prefs[envelopeKey(slot)] = it }
             }
             if (p.dropLegacyFlag) {
                 prefs.remove(LEGACY_META_KEY)
