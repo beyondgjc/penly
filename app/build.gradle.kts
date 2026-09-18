@@ -99,6 +99,11 @@ dependencies {
     // 汉字 → 拼音首字母：列表 A–Z 分组与右侧索引条需要（纯 Java，无传递依赖，
     // 在 Maven Central 上；tinypinyin 只发 JitPack 且坐标不可用，故选 pinyin4j）
     implementation(libs.pinyin4j)
+    // 契约 v2 本机层 KDF：Argon2id（内存困难，RFC 9106）。用 BouncyCastle 轻量 API
+    // （org.bouncycastle.crypto.generators，不经 JCA provider，避开与系统内置旧版 BC 的冲突）。
+    // R8 只留 Argon2 相关类，体积增量几百 KB。跨端契约层的小程序端用 hash-wasm，
+    // 两端以固定向量互验（见工作区《印迹_跨端契约v2_地基工程.md》）。
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     // 扫码录入 2FA 密钥（v3.0 项目④）：自带取景 Activity 与相机权限流程
     implementation(libs.zxing.android.embedded)
     // 端内 AI 检索：ONNX Runtime（Android CPU 推理）+ bge-small-zh-v1.5 int8 模型（assets/models/）。
