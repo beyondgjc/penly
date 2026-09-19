@@ -114,6 +114,27 @@ data class VaultItem(
     @SerialName("noteMac") val noteMac: String = "",
     /** totp 为 Android 单侧扩展字段，Mac 同样只在 Android 侧计算与验证 */
     @SerialName("totpMac") val totpMac: String = "",
+    /**
+     * Passkey（v5.0-②）：rpId / credentialId / userHandle **明文**存储——锁定态下
+     * Credential Provider 的 begin 查询要靠 rpId 过滤条目，且三者仅泄露
+     * 「存在哪些站点」这一非敏感事实（与第三方密码管理器同水位）。
+     * 空串 rpId = 非密码条目（普通账密），旧数据/旧备份反序列化自动兼容。
+     */
+    @SerialName("rpId") val rpId: String = "",
+    /** WebAuthn credentialId（raw bytes 的 base64；展示时转 base64url） */
+    @SerialName("credIdB64") val credIdB64: String = "",
+    /** WebAuthn userHandle（raw bytes 的 base64，注册时由 RP 下发） */
+    @SerialName("userHandleB64") val userHandleB64: String = "",
+    /** WebAuthn 签名计数器（防克隆指标，明文，每次断言后递增回存） */
+    @SerialName("signCount") val signCount: Int = 0,
+    /**
+     * Passkey 私钥（PKCS8 DER 的 base64，软件密钥对——2026-09-19 拍板：随金库加密
+     * 存储以换取换机/备份恢复后 passkey 可用）。加密待遇与 account/secret/note/totp
+     * 完全一致（GCM: AAD=passkey|条目id；CBC: aesEncrypt+recordMac）。
+     */
+    @SerialName("passkeyEnc") val passkeyEnc: String = "",
+    @SerialName("passkeyIv") val passkeyIv: String = "",
+    @SerialName("passkeyMac") val passkeyMac: String = "",
     @SerialName("createdAt") val createdAt: Long = 0,
     @SerialName("updatedAt") val updatedAt: Long = 0,
 )
@@ -138,6 +159,12 @@ data class VaultItemV2(
     @SerialName("totpPeriod") val totpPeriod: Int = 0,
     @SerialName("totpAlgo") val totpAlgo: String = "",
     @SerialName("appPackage") val appPackage: String = "",
+    /** Passkey 扩展（v5.0-②，与 [VaultItem] 同名同义；GCM 密文自带 nonce，无 Iv/Mac） */
+    @SerialName("rpId") val rpId: String = "",
+    @SerialName("credIdB64") val credIdB64: String = "",
+    @SerialName("userHandleB64") val userHandleB64: String = "",
+    @SerialName("signCount") val signCount: Int = 0,
+    @SerialName("passkeyEnc") val passkeyEnc: String = "",
     @SerialName("createdAt") val createdAt: Long = 0,
     @SerialName("updatedAt") val updatedAt: Long = 0,
 )
@@ -159,6 +186,12 @@ data class PlainEntry(
     val totpAlgo: String = "",
     /** 条目来源 App 包名（空串 = 手动创建，无来源匹配） */
     val appPackage: String = "",
+    /** Passkey 扩展（非空 rpId = passkey 条目；priv = PKCS8 DER 的 base64） */
+    val rpId: String = "",
+    val credIdB64: String = "",
+    val userHandleB64: String = "",
+    val signCount: Int = 0,
+    val passkeyPriv: String = "",
     val createdAt: Long,
     val updatedAt: Long,
 )

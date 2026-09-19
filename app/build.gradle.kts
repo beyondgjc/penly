@@ -114,6 +114,10 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     // 扫码录入 2FA 密钥（v3.0 项目④）：自带取景 Activity 与相机权限流程
     implementation(libs.zxing.android.embedded)
+    // Passkey 保险库（v5.0-②）：Credential Manager provider 侧 API（begin 阶段 Service +
+    // PendingIntentHandler），Android 14+ 生效；只引核心库，无需 play-services-auth 变体
+    // （那是客户端侧调 Google 密码管理器用的）
+    implementation("androidx.credentials:credentials:1.3.0")
     // 端内 AI 检索：ONNX Runtime（Android CPU 推理）+ bge-small-zh-v1.5 int8 模型（assets/models/）。
     // 1.20.0→1.21.1（2026-09-17）：1.21 起原生库按 16 KB 页对齐（Android 15+ 设备要求），
     // 1.20.0 的 libonnxruntime4j_jni.so 未对齐会在 16 KB 设备上加载失败；选 1.21 线终态 = 最小漂移

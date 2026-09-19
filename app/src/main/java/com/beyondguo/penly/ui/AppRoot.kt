@@ -47,6 +47,7 @@ import com.beyondguo.penly.ui.screens.EditScreen
 import com.beyondguo.penly.ui.screens.ListScreen
 import com.beyondguo.penly.ui.screens.LockScreen
 import com.beyondguo.penly.ui.screens.OnboardingScreen
+import com.beyondguo.penly.ui.screens.PasskeyListScreen
 import com.beyondguo.penly.ui.screens.SettingsScreen
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -57,6 +58,7 @@ private object Routes {
     const val SETTINGS = "settings"
     const val PROTECTION = "protection"
     const val SCAN = "scan"
+    const val PASSKEYS = "passkeys"
 
     fun edit(itemId: String = "") = "edit?itemId=$itemId"
 }
@@ -199,6 +201,12 @@ private fun ReadyRoot(repo: VaultRepository, onVaultChanged: () -> Unit) {
             }
             composable(Routes.SCAN) {
                 SecurityScanScreen(
+                    repo = repo,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(Routes.PASSKEYS) {
+                PasskeyListScreen(
                     repo = repo,
                     onBack = { navController.popBackStack() },
                 )

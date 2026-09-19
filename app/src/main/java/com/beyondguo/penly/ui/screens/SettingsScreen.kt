@@ -370,6 +370,12 @@ fun SettingsScreen(
                     subtitle = "检查密码是否出现在泄露库中（联网）",
                     onClick = { onOpen("scan") },
                 )
+                // Passkey 保险库（v5.0-②）：注册/签名在系统凭据流程内，此处只做查看与清理
+                SettingRow(
+                    title = "Passkey 保险库",
+                    subtitle = "管理保存的通行密钥（Android 14+）",
+                    onClick = { onOpen("passkeys") },
+                )
             }
 
             EnvelopeSection(repo)

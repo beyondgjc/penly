@@ -24,7 +24,11 @@ class BackupCodecV2Test {
 
     private val pwd = "test-主密码-123"
 
-    private fun entry(id: String, withTotp: Boolean = true) = PlainEntry(
+    private fun entry(
+        id: String,
+        withTotp: Boolean = true,
+        withPasskey: Boolean = false,
+    ) = PlainEntry(
         id = id,
         title = "标题-$id",
         category = if (withTotp) "login" else "note",
@@ -36,6 +40,11 @@ class BackupCodecV2Test {
         totpPeriod = if (withTotp) 60 else 0,
         totpAlgo = if (withTotp) "SHA256" else "",
         appPackage = if (withTotp) "com.example.$id" else "",
+        rpId = if (withPasskey) "example.com" else "",
+        credIdB64 = if (withPasskey) Base64.getEncoder().encodeToString("cred-$id".toByteArray()) else "",
+        userHandleB64 = if (withPasskey) Base64.getEncoder().encodeToString("uh-$id".toByteArray()) else "",
+        signCount = if (withPasskey) 5 else 0,
+        passkeyPriv = if (withPasskey) "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQ-$id" else "",
         createdAt = 1000L,
         updatedAt = 2000L,
     )
@@ -43,7 +52,11 @@ class BackupCodecV2Test {
     /** 全测试共享一次导出（Argon2id 只跑一次），各测试基于它验证不同语义 */
     private val fixtureText: String by lazy {
         BackupCodecV2.encode(
-            entries = listOf(entry("id-1"), entry("id-2", withTotp = false)),
+            entries = listOf(
+                entry("id-1"),
+                entry("id-2", withTotp = false),
+                entry("id-3", withTotp = false, withPasskey = true),
+            ),
             masterRef = null,
             password = pwd,
             vaultCreatedAt = 42L,
@@ -58,10 +71,37 @@ class BackupCodecV2Test {
 
     @Test
     fun `roundtrip preserves all fields`() {
-        val entries = listOf(entry("id-1"), entry("id-2", withTotp = false))
+        val entries = listOf(
+            entry("id-1"),
+            entry("id-2", withTotp = false),
+            entry("id-3", withTotp = false, withPasskey = true),
+        )
         assertNull(BackupCodecV2.verifyPassword(fixtureText, pwd))
         val out = BackupCodecV2.decryptItems(BackupCodecV2.decode(fixtureText), pwd)
         assertEquals(entries, out)
+    }
+
+    @Test
+    fun `passkey fields encrypted and aad-bound`() {
+        val root = kotlinx.serialization.json.Json.parseToJsonElement(fixtureText).jsonObject
+        val passkeyItem = root["items"]!!.jsonArray[2].jsonObject
+        // 明文不落盘：私钥只在 passkeyEnc 里
+        assertFalse(passkeyItem.toString().contains("MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQ-id-3"))
+        assertTrue(passkeyItem.containsKey("passkeyEnc"))
+        assertTrue(passkeyItem.containsKey("rpId"))
+        // v2 全格式无 Iv/Mac（含 passkey）
+        listOf("passkeyIv", "passkeyMac").forEach { key ->
+            assertFalse("v2 文件不应包含 $key 键", passkeyItem.containsKey(key))
+        }
+        // passkeyEnc 与其他字段同构：同条目跨字段搬移（secretEnc↔passkeyEnc）必须被 AAD 拦下
+        val file = BackupCodecV2.decode(fixtureText)
+        val a = file.items[2]
+        val swapped = file.copy(items = listOf(
+            a.copy(secretEnc = a.passkeyEnc, passkeyEnc = a.secretEnc),
+        ))
+        assertThrows(CryptoV2.IntegrityException::class.java) {
+            BackupCodecV2.decryptItems(swapped, pwd)
+        }
     }
 
     @Test

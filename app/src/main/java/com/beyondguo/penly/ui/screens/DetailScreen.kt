@@ -114,8 +114,9 @@ fun DetailScreen(
                         .navigationBarsPadding(),
                 ) {
                     Spacer(Modifier.height(10.dp))
+                    val isPasskey = e.rpId.isNotBlank()
                     Text(
-                        "密码详情",
+                        if (isPasskey) "Passkey 详情" else "密码详情",
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Bold,
                         color = PenText1,
@@ -147,33 +148,51 @@ fun DetailScreen(
 
                     Spacer(Modifier.height(10.dp))
 
-                    // 账号行：点行复制
+                    // 账号行：点行复制（passkey 条目即 WebAuthn 用户名）
                     ValueRow(
-                        label = "账号",
+                        label = if (isPasskey) "用户名" else "账号",
                         value = e.account,
                         modifier = Modifier.clickable {
                             if (e.account.isNotEmpty()) {
-                                copySensitive(context, "账号", e.account)
-                                android.widget.Toast.makeText(context, "账号已复制", android.widget.Toast.LENGTH_SHORT).show()
+                                copySensitive(context, if (isPasskey) "用户名" else "账号", e.account)
+                                android.widget.Toast.makeText(context, "已复制", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         },
                     )
                     HorizontalLine()
 
-                    // 密码行：点行复制并揭示明文（与参考一致，无显式开关）
-                    // 空密码不套掩码，让 emptyText 的「（空）」透出（bug：空密码行永远显示星星）
-                    ValueRow(
-                        label = "密码",
-                        value = if (e.secret.isEmpty()) "" else if (secretVisible) e.secret else "••••••••••",
-                        emptyText = if (e.secret.isEmpty()) "（空）" else null,
-                        modifier = Modifier.clickable {
-                            if (e.secret.isNotEmpty()) {
-                                secretVisible = true
-                                copySensitive(context, "密码", e.secret)
-                                android.widget.Toast.makeText(context, "密码已复制", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                    )
+                    if (!isPasskey) {
+                        // 密码行：点行复制并揭示明文（与参考一致，无显式开关）
+                        // 空密码不套掩码，让 emptyText 的「（空）」透出（bug：空密码行永远显示星星）
+                        ValueRow(
+                            label = "密码",
+                            value = if (e.secret.isEmpty()) "" else if (secretVisible) e.secret else "••••••••••",
+                            emptyText = if (e.secret.isEmpty()) "（空）" else null,
+                            modifier = Modifier.clickable {
+                                if (e.secret.isNotEmpty()) {
+                                    secretVisible = true
+                                    copySensitive(context, "密码", e.secret)
+                                    android.widget.Toast.makeText(context, "密码已复制", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                        )
+                    } else {
+                        // passkey 条目（v5.0-②）：站点 / 凭据 ID / 签名次数；
+                        // 私钥永不回显（加密存储于金库，随备份恢复）
+                        ValueRow(label = "站点", value = e.rpId)
+                        HorizontalLine()
+                        ValueRow(label = "凭据 ID", value = e.credIdB64.take(12) + "…")
+                        HorizontalLine()
+                        ValueRow(label = "签名次数", value = e.signCount.toString())
+                        HorizontalLine()
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            "私钥加密存储于金库，随备份恢复，不在此显示",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = PenText3,
+                        )
+                        Spacer(Modifier.height(14.dp))
+                    }
 
                     // 2FA 验证码卡（v3.0 项目④）：条目有 TOTP 密钥才渲染
                     if (e.totp.isNotBlank()) {

@@ -25,6 +25,8 @@ object ItemCipher {
     const val F_SECRET = "secret"
     const val F_NOTE = "note"
     const val F_TOTP = "totp"
+    /** Passkey 私钥（v5.0-② Android 单侧扩展，AAD 机制与其他字段完全一致） */
+    const val F_PASSKEY = "passkey"
 
     /** 单字段加密产物：CBC 为 (ct, iv, mac) 三元组；GCM 只用 dataB64（iv/mac 空串） */
     data class Field(val dataB64: String, val ivB64: String, val macB64: String)
@@ -80,6 +82,7 @@ object ItemCipher {
             val s = encField(format, F_SECRET, e.id, e.secret, key)
             val n = encField(format, F_NOTE, e.id, e.note, key)
             val t = encField(format, F_TOTP, e.id, e.totp, key)
+            val p = encField(format, F_PASSKEY, e.id, e.passkeyPriv, key)
             VaultItem(
                 id = e.id,
                 title = e.title,
@@ -92,6 +95,11 @@ object ItemCipher {
                 totpPeriod = e.totpPeriod,
                 totpAlgo = e.totpAlgo,
                 appPackage = e.appPackage,
+                rpId = e.rpId,
+                credIdB64 = e.credIdB64,
+                userHandleB64 = e.userHandleB64,
+                signCount = e.signCount,
+                passkeyEnc = p.dataB64, passkeyIv = p.ivB64, passkeyMac = p.macB64,
                 createdAt = e.createdAt,
                 updatedAt = e.updatedAt,
             )
@@ -110,6 +118,11 @@ object ItemCipher {
         totpPeriod = item.totpPeriod,
         totpAlgo = item.totpAlgo,
         appPackage = item.appPackage,
+        rpId = item.rpId,
+        credIdB64 = item.credIdB64,
+        userHandleB64 = item.userHandleB64,
+        signCount = item.signCount,
+        passkeyPriv = decField(format, F_PASSKEY, item.id, item.passkeyEnc, item.passkeyIv, item.passkeyMac, key),
         createdAt = item.createdAt,
         updatedAt = item.updatedAt,
     )
@@ -135,11 +148,13 @@ object ItemCipher {
             val s = encField(newFormat, F_SECRET, src.id, plain.secret, newKey)
             val n = encField(newFormat, F_NOTE, src.id, plain.note, newKey)
             val t = encField(newFormat, F_TOTP, src.id, plain.totp, newKey)
+            val p = encField(newFormat, F_PASSKEY, src.id, plain.passkeyPriv, newKey)
             src.copy(
                 accountEnc = a.dataB64, accountIv = a.ivB64, accountMac = a.macB64,
                 secretEnc = s.dataB64, secretIv = s.ivB64, secretMac = s.macB64,
                 noteEnc = n.dataB64, noteIv = n.ivB64, noteMac = n.macB64,
                 totpEnc = t.dataB64, totpIv = t.ivB64, totpMac = t.macB64,
+                passkeyEnc = p.dataB64, passkeyIv = p.ivB64, passkeyMac = p.macB64,
             )
         }
 }

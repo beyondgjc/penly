@@ -22,7 +22,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * - `meta.verify` 密码预检槽位：GCM(key32, "yinji-verify")，aad="yinji-verify-v1"
  *   —— 空备份也能预检密码（v1 空备份无密码可验的补丁）；
  * - 子密钥 = HKDF-SHA256(ikm=key32, salt=空, info="yinji-enc-v2")；
- * - 字段 AAD = `"<字段名>|<条目id>"`，字段名 ∈ {account, secret, note, totp}；
+ * - 字段 AAD = `"<字段名>|<条目id>"`，字段名 ∈ {account, secret, note, totp, passkey}；
  * - 空串 `*Enc` = 无内容（不加密空串）；v2 文件不含 `*Iv` / `*Mac` 键。
  */
 object BackupCodecV2 {
@@ -45,6 +45,7 @@ object BackupCodecV2 {
     const val FIELD_SECRET = "secret"
     const val FIELD_NOTE = "note"
     const val FIELD_TOTP = "totp"
+    const val FIELD_PASSKEY = "passkey"
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -148,6 +149,13 @@ object BackupCodecV2 {
         totpPeriod = e.totpPeriod,
         totpAlgo = e.totpAlgo,
         appPackage = e.appPackage,
+        // passkey 扩展（v5.0-②）：rpId/credId/userHandle/signCount 明文直拷，
+        // 私钥（PKCS8 DER 的 b64）与 account/secret 同待遇加密（AAD=passkey|条目id）
+        rpId = e.rpId,
+        credIdB64 = e.credIdB64,
+        userHandleB64 = e.userHandleB64,
+        signCount = e.signCount,
+        passkeyEnc = enc(e.passkeyPriv, FIELD_PASSKEY, e.id, subKey),
         createdAt = e.createdAt,
         updatedAt = e.updatedAt,
     )
@@ -230,6 +238,12 @@ object BackupCodecV2 {
         totpPeriod = totpPeriod,
         totpAlgo = totpAlgo,
         appPackage = appPackage,
+        // passkey 扩展（与 encryptEntry 对称；旧备份无这些键 → 默认空值）
+        rpId = rpId,
+        credIdB64 = credIdB64,
+        userHandleB64 = userHandleB64,
+        signCount = signCount,
+        passkeyPriv = dec(passkeyEnc, FIELD_PASSKEY, id, subKey),
         createdAt = createdAt,
         updatedAt = updatedAt,
     )

@@ -922,6 +922,106 @@ class VaultRepository(private val store: VaultStore) {
         }
     }
 
+    // ---------------- Passkey（v5.0-②） ----------------
+
+    /** Passkey 条目的界面/Provider 视图（不含私钥——签名时按 id 现解） */
+    data class PasskeyInfo(
+        val id: String,
+        val rpId: String,
+        val rpName: String,
+        val userName: String,
+        val credIdB64: String,
+        val userHandleB64: String,
+        val signCount: Int,
+        val createdAt: Long,
+    )
+
+    /**
+     * 保存 passkey 条目（注册流程由 PasskeyActivity 调入，金库必须已解锁）。
+     * 私钥（PKCS8 DER base64）走 passkey 字段加密，与账密同待遇——换机/备份恢复
+     * 后随金库回来（2026-09-19 拍板：软件密钥对，不硬件绑定）。
+     * rpId/credId/userHandle 明文：解锁后 begin 后续阶段按 rpId 过滤无需解密。
+     */
+    suspend fun savePasskey(
+        rpId: String,
+        rpName: String,
+        userName: String,
+        userHandleB64: String,
+        credIdB64: String,
+        privPkcs8B64: String,
+    ): String {
+        val key = SessionManager.requireKey()
+        val slot = SessionManager.requireSlot()
+        val fmt = currentFormat()
+        val itemId = CryptoEngine.genId()
+        val p = ItemCipher.encField(fmt, ItemCipher.F_PASSKEY, itemId, privPkcs8B64, key)
+        val a = ItemCipher.encField(fmt, ItemCipher.F_ACCOUNT, itemId, userName, key)
+        val now = System.currentTimeMillis()
+        val item = VaultItem(
+            id = itemId,
+            title = rpName.ifBlank { rpId },
+            category = "passkey",
+            accountEnc = a.dataB64, accountIv = a.ivB64, accountMac = a.macB64,
+            rpId = rpId,
+            credIdB64 = credIdB64,
+            userHandleB64 = userHandleB64,
+            signCount = 0,
+            passkeyEnc = p.dataB64, passkeyIv = p.ivB64, passkeyMac = p.macB64,
+            createdAt = now,
+            updatedAt = now,
+        )
+        store.upsertItem(slot, item)
+        withContext(Dispatchers.Default) { syncShadowIfNeeded() }
+        return itemId
+    }
+
+    /** 当前槽位的全部 passkey 条目（userName 解密；私钥不解——列表展示用不到） */
+    suspend fun listPasskeys(): List<PasskeyInfo> {
+        val key = SessionManager.requireKey()
+        val slot = SessionManager.requireSlot()
+        val fmt = currentFormat()
+        return store.readItems(slot)
+            .filter { it.rpId.isNotBlank() }
+            .map {
+                PasskeyInfo(
+                    id = it.id,
+                    rpId = it.rpId,
+                    rpName = it.title,
+                    userName = ItemCipher.decField(
+                        fmt, ItemCipher.F_ACCOUNT, it.id,
+                        it.accountEnc, it.accountIv, it.accountMac, key,
+                    ),
+                    credIdB64 = it.credIdB64,
+                    userHandleB64 = it.userHandleB64,
+                    signCount = it.signCount,
+                    createdAt = it.createdAt,
+                )
+            }
+    }
+
+    /** 按 rpId 过滤（已解锁态；begin 阶段的泛化 entry 不做任何数据访问） */
+    suspend fun passkeysForRpId(rpId: String): List<PasskeyInfo> =
+        listPasskeys().filter { it.rpId == rpId }
+
+    /** 取私钥（PKCS8 DER base64）——签名时现解，用后即弃，不缓存 */
+    suspend fun passkeyPrivB64(id: String): String? {
+        val key = SessionManager.requireKey()
+        val slot = SessionManager.requireSlot()
+        val fmt = currentFormat()
+        val item = store.readItems(slot).firstOrNull { it.id == id } ?: return null
+        return ItemCipher.decField(
+            fmt, ItemCipher.F_PASSKEY, item.id,
+            item.passkeyEnc, item.passkeyIv, item.passkeyMac, key,
+        )
+    }
+
+    /** 断言成功后回写签名计数（防克隆指标；单键 upsert 原子，不触发影子同步） */
+    suspend fun bumpSignCount(id: String, newCount: Int) {
+        val slot = SessionManager.requireSlot()
+        val item = store.readItems(slot).firstOrNull { it.id == id } ?: return
+        store.upsertItem(slot, item.copy(signCount = newCount, updatedAt = System.currentTimeMillis()))
+    }
+
     // ---------------- 修改主密码 / 重置 ----------------
 
     /**
