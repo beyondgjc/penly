@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <!-- 印迹应用图标 · 满出血正方形版（2026-09-11）
-       与 yinji-icon-6-fingerprint.svg 同一份字形几何，唯一差别是不加圆角、四边直角。
+  <!-- 印迹应用图标 · 满出血正方形版（2026-09-20 收口改版）
+       与 yinji-icon-6-composite.svg 同一份字形几何（指纹 v3：底端轮廓为左右镜像 V 形），
+       唯一差别是不加圆角、四边直角。
        用途：微信小程序头像 / iOS App Store 1024 / 应用商店列表图
          —— 这些平台会自己加遮罩（微信裁圆形、iOS 加超椭圆），自己加圆角会导致
             ① 上架被拒（App Store 不允许 alpha 通道）② 圆角槽位露出透明四角。
@@ -9,8 +10,8 @@
   <g transform="translate(512 510) scale(0.96947) translate(-512 -510)"
      fill="none" stroke="#FFFFFF" stroke-width="76"
      stroke-linecap="round" stroke-linejoin="round">
-    <path d="M212 764 V520 A300 300 0 0 1 812 520 V700"/>
-    <path d="M362 784 V520 A150 150 0 0 1 662 520 V688"/>
+    <path d="M212 720 V520 A300 300 0 0 1 812 520 V720"/>
+    <path d="M362 770 V520 A150 150 0 0 1 662 520 V770"/>
     <path d="M512 520 V800"/>
   </g>
 </svg>

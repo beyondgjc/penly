@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 印迹 · 自适应图标前景层（指纹 v2）
-     坐标系：108 × 108 画布，字形外接盒 = 46.08dp = 可见区(72dp) 的 64%
-     换算基准 p_108 = 54 + 0.0681657 × (p_1024 − 512/510)，与合成图标同口径
+<!-- 印迹 · 自适应图标前景层（指纹 v3 · 2026-09-20 收口改版）
+     坐标系：108 x 108 画布，字形外接盒 = 46.08dp = 可见区(72dp) 的 64%
+     换算基准 p_108 = 54 + (p_1024_norm - 512/510) x 0.0703511
+     本次改版：五条竖笔底端由 764/784/800/688/700 改为 720/770/800/770/720，
+       使底端轮廓成左右镜像 V 形，极差 112 -> 80，规避「三长两短」并修正左右不对称。
+     外接盒未变（676x656，中心 512,510）-> 缩放系数与 v2 相同
      ⚠️ 前景层只用中央 66dp 安全区：此处 46.08dp，圆形/方圆/方形遮罩实测均不裁切
-     生成脚本见工作区 印迹图标改版/src/build_android_assets.cjs，勿手改坐标 -->
+     生成脚本见工作区 印迹图标改版/src/build_A_android.cjs，勿手改坐标 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -15,14 +18,14 @@
         android:strokeWidth="5.181"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M33.55,71.314V54.682A20.45,20.45 0 0,1 74.45,54.682V66.951" />
+        android:pathData="M33.55,68.315V54.682A20.45,20.45 0 0,1 74.45,54.682V68.315" />
     <path
         android:fillColor="#00000000"
         android:strokeColor="#FFFFFF"
         android:strokeWidth="5.181"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M43.775,72.677V54.682A10.225,10.225 0 0,1 64.225,54.682V66.133" />
+        android:pathData="M43.775,71.723V54.682A10.225,10.225 0 0,1 64.225,54.682V71.723" />
     <path
         android:fillColor="#00000000"
         android:strokeColor="#FFFFFF"
