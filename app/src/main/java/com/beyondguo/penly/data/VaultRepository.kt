@@ -288,6 +288,8 @@ class VaultRepository(private val store: VaultStore) {
         }
         SessionManager.establish(target.second, target.first)
         primaryCache = null
+        // 心跳（#43 死信开关）：任何成功解锁 = 活人证明，自动续期
+        store.markHeirBeat(System.currentTimeMillis())
         // 检索引擎懒加载（首次解锁时装载 ~24MB 模型）+ 索引后台重建：
         // 走独立 scope，**不阻塞 unlock 返回**；失败自动降级 Noop（纯关键词检索）
         ensureSemanticEngineAsync()
@@ -1240,6 +1242,49 @@ class VaultRepository(private val store: VaultStore) {
             vaultCreatedAt = m.createdAt,
         )
     }
+
+    /**
+     * 遗产交接（#43）：生成遗产恢复包。
+     *
+     * 包体 = 标准 v2 备份文件（BackupCodecV2 契约完全复用），唯一差异是
+     * 加密「密码」为遗产密钥的 hex 形态（64 字符随机串，无人需要记住）、
+     * masterRef = null（custom 语义）。恢复方收集 2 份 Shamir 分片重建 L 后，
+     * 以 hex(L) 为密码走 [importJson] 即可导入——导入后本地解锁密码即 hex(L)，
+     * 受托人界面应立即引导 changeMasterPassword(old=hex(L), new=新主密码) 完成接管。
+     *
+     * 必须在解锁会话内调用（读取金库全量条目）。
+     */
+    suspend fun exportLegacyPackage(legacyKeyHex: String): String {
+        val slot = SessionManager.requireSlot()
+        val m = store.readMeta(slot) ?: throw IllegalStateException("印迹尚未初始化")
+        val entries = store.readItems(slot).map { decryptItem(it) }
+        return BackupCodecV2.encode(
+            entries = entries,
+            masterRef = null,
+            password = legacyKeyHex,
+            vaultCreatedAt = m.createdAt,
+        )
+    }
+
+    /** 遗产交接当前配置状态：intervalDays（0=未配置/不提醒，UI 最低可选 30 天）、lastBeat、恢复包生成时间 */
+    suspend fun heirStatus(): Triple<Int, Long, Long> = Triple(
+        store.readHeirIntervalDays(),
+        store.readHeirLastBeat(),
+        store.readHeirPkgAt(),
+    )
+
+    suspend fun setHeirInterval(days: Int) {
+        store.setHeirIntervalDays(days)
+        if (days > 0 && store.readHeirLastBeat() == 0L) {
+            store.markHeirBeat(System.currentTimeMillis())
+        }
+    }
+
+    /** 遗产恢复包最近一次生成时间（「已配置」判定 + 重新生成提示用） */
+    suspend fun markHeirPkg() = store.markHeirPkg(System.currentTimeMillis())
+
+    /** 关闭遗产交接：清除本机全部遗产状态，不影响金库数据（已导出的包/分片需自行处理） */
+    suspend fun disableHeir() = store.clearHeir()
 
     /**
      * 导入备份并覆盖本地 —— v1/v2 按顶层 version 自动分发（[BackupCodecV2.decodeAny]）。

@@ -376,6 +376,12 @@ fun SettingsScreen(
                     subtitle = "管理保存的通行密钥（Android 14+）",
                     onClick = { onOpen("passkeys") },
                 )
+                // 遗产交接（v5.0 #43/#44）：Shamir 分片设置与恢复包生成
+                SettingRow(
+                    title = "遗产交接",
+                    subtitle = "为信任的人准备恢复路径（2-of-3 分片）",
+                    onClick = { onOpen("heirsetup") },
+                )
             }
 
             EnvelopeSection(repo)

@@ -52,7 +52,11 @@ import kotlinx.coroutines.launch
  * - 支持忘记密码 → 重置（清空全部数据）
  */
 @Composable
-fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
+fun LockScreen(
+    repo: VaultRepository,
+    onVaultChanged: () -> Unit,
+    onHeirRecover: () -> Unit = {},
+) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
     val scope = rememberCoroutineScope()
@@ -68,6 +72,19 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
     var showKeyUnavailable by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { requiresPwd = repo.requiresPassword() }
+
+    // 遗产交接死信开关（v5.0 #43/#44）：超过心跳间隔未确认平安 → 提示受托人可恢复。
+    // 每次 unlock 成功都会 markHeirBeat（活人证明），所以"进锁屏时已超时"即视为失联信号。
+    var heirOverdueDays by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(Unit) {
+        val (intervalDays, lastBeat, _) = repo.heirStatus()
+        if (intervalDays > 0 && lastBeat > 0) {
+            val elapsed = System.currentTimeMillis() - lastBeat
+            if (elapsed > intervalDays * 86_400_000L) {
+                heirOverdueDays = elapsed / 86_400_000L
+            }
+        }
+    }
 
     /** 重置本机数据（TEE 失效恢复 / 忘记主密码）——重置后从备份文件导入 */
     fun resetAndRecover() {
@@ -140,6 +157,20 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        heirOverdueDays?.let { days ->
+            Text(
+                "已 $days 天未确认平安",
+                color = PenWarn,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "若机主失联，受托人可用恢复分片接管本库",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(24.dp))
+        }
         Icon(Icons.Filled.Lock, contentDescription = null, tint = PenGreen, modifier = Modifier.size(76.dp))
         Spacer(Modifier.height(14.dp))
         Text("印迹", style = MaterialTheme.typography.titleLarge)
@@ -206,6 +237,8 @@ fun LockScreen(repo: VaultRepository, onVaultChanged: () -> Unit) {
 
         Spacer(Modifier.height(36.dp))
         TextButton(onClick = { showReset = true }) { Text("忘记主密码？重置印迹", color = PenDanger) }
+        // 遗产交接受托人入口：常驻，持 2 张分片 + 恢复包即可接管
+        TextButton(onClick = onHeirRecover) { Text("我是受托人，帮忙恢复") }
     }
 
     if (showReset) {

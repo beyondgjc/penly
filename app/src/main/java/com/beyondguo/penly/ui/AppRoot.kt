@@ -44,6 +44,8 @@ import com.beyondguo.penly.ui.screens.ChangePwdScreen
 import com.beyondguo.penly.ui.screens.SecurityScanScreen
 import com.beyondguo.penly.ui.screens.DetailScreen
 import com.beyondguo.penly.ui.screens.EditScreen
+import com.beyondguo.penly.ui.screens.HeirRecoverScreen
+import com.beyondguo.penly.ui.screens.HeirSetupScreen
 import com.beyondguo.penly.ui.screens.ListScreen
 import com.beyondguo.penly.ui.screens.LockScreen
 import com.beyondguo.penly.ui.screens.OnboardingScreen
@@ -59,6 +61,7 @@ private object Routes {
     const val PROTECTION = "protection"
     const val SCAN = "scan"
     const val PASSKEYS = "passkeys"
+    const val HEIR_SETUP = "heirsetup"
 
     fun edit(itemId: String = "") = "edit?itemId=$itemId"
 }
@@ -74,6 +77,8 @@ fun AppRoot() {
 
     var initialized by remember { mutableStateOf<Boolean?>(null) }
     var refreshKey by remember { mutableIntStateOf(0) }
+    // 受托人恢复（#44）：锁屏态的独立出口——进入后金库被恢复/接管，走 onVaultChanged 刷新状态机
+    var showHeirRecover by remember { mutableStateOf(false) }
     LaunchedEffect(refreshKey) {
         // v1 单槽位 → v2 双槽位迁移；无 legacy 数据时立即返回，成本可忽略
         repo.migrateIfNeeded()
@@ -84,7 +89,18 @@ fun AppRoot() {
     when {
         initialized == null -> LoadingScreen()
         initialized == false -> OnboardingScreen(repo = repo, onInitialized = refresh)
-        !unlocked -> LockScreen(repo = repo, onVaultChanged = refresh)
+        showHeirRecover -> HeirRecoverScreen(
+            repo = repo,
+            onDone = {
+                showHeirRecover = false
+                refresh()
+            },
+        )
+        !unlocked -> LockScreen(
+            repo = repo,
+            onVaultChanged = refresh,
+            onHeirRecover = { showHeirRecover = true },
+        )
         else -> ReadyRoot(repo = repo, onVaultChanged = refresh)
     }
 }
@@ -207,6 +223,12 @@ private fun ReadyRoot(repo: VaultRepository, onVaultChanged: () -> Unit) {
             }
             composable(Routes.PASSKEYS) {
                 PasskeyListScreen(
+                    repo = repo,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(Routes.HEIR_SETUP) {
+                HeirSetupScreen(
                     repo = repo,
                     onBack = { navController.popBackStack() },
                 )

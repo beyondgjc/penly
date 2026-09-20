@@ -42,6 +42,11 @@ class VaultStore(private val context: Context) {
         // 最近一次成功导出备份的时间戳（备份前置检查：启用信封前必须有已导出备份）
         val LAST_EXPORT_KEY = stringPreferencesKey("last_export_at")
 
+        // 遗产交接（heir_ 前缀；"legacy_" 已被 v1 迁移数据占用，避免歧义）
+        val HEIR_INTERVAL_KEY = androidx.datastore.preferences.core.intPreferencesKey("heir_interval_days")
+        val HEIR_LAST_BEAT_KEY = androidx.datastore.preferences.core.longPreferencesKey("heir_last_beat")
+        val HEIR_PKG_AT_KEY = androidx.datastore.preferences.core.longPreferencesKey("heir_pkg_at")
+
         // v1 单槽位：仅迁移期读取，迁移完成后删除
         val LEGACY_META_KEY = stringPreferencesKey("vault_meta")
         val LEGACY_ITEMS_KEY = stringPreferencesKey("vault_items")
@@ -120,6 +125,42 @@ class VaultStore(private val context: Context) {
         context.penlyDataStore.edit { p -> p[LAST_EXPORT_KEY] = ts.toString() }
     }
 
+    // ---------------- 遗产交接（#43/#44，heir_ 前缀区别于 v1 legacy 迁移键） ----------------
+
+    /** 死信开关间隔天数（0 = 关闭）；心跳 = 每次成功解锁自动续期 */
+    suspend fun readHeirIntervalDays(): Int =
+        context.penlyDataStore.data.first()[HEIR_INTERVAL_KEY] ?: 0
+
+    suspend fun setHeirIntervalDays(days: Int) {
+        context.penlyDataStore.edit { p ->
+            if (days <= 0) p.remove(HEIR_INTERVAL_KEY) else p[HEIR_INTERVAL_KEY] = days
+        }
+    }
+
+    suspend fun readHeirLastBeat(): Long =
+        context.penlyDataStore.data.first()[HEIR_LAST_BEAT_KEY] ?: 0L
+
+    suspend fun markHeirBeat(ts: Long) {
+        context.penlyDataStore.edit { p -> p[HEIR_LAST_BEAT_KEY] = ts }
+    }
+
+    /** 遗产恢复包最近一次生成时间（0 = 尚未生成） */
+    suspend fun readHeirPkgAt(): Long =
+        context.penlyDataStore.data.first()[HEIR_PKG_AT_KEY] ?: 0L
+
+    suspend fun markHeirPkg(ts: Long) {
+        context.penlyDataStore.edit { p -> p[HEIR_PKG_AT_KEY] = ts }
+    }
+
+    /** 关闭遗产交接：清除本机全部遗产状态（间隔/心跳/恢复包记录），不影响金库数据 */
+    suspend fun clearHeir() {
+        context.penlyDataStore.edit { p ->
+            p.remove(HEIR_INTERVAL_KEY)
+            p.remove(HEIR_LAST_BEAT_KEY)
+            p.remove(HEIR_PKG_AT_KEY)
+        }
+    }
+
     /** 清空两个槽位与 legacy 残留 */
     suspend fun clearAll() {
         context.penlyDataStore.edit { p ->
@@ -131,6 +172,9 @@ class VaultStore(private val context: Context) {
             p.remove(envelopeKey(Slot.B))
             p.remove(LEGACY_META_KEY)
             p.remove(LEGACY_ITEMS_KEY)
+            p.remove(HEIR_INTERVAL_KEY)
+            p.remove(HEIR_LAST_BEAT_KEY)
+            p.remove(HEIR_PKG_AT_KEY)
         }
     }
 
