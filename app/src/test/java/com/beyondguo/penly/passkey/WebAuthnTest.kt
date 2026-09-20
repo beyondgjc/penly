@@ -264,8 +264,13 @@ class WebAuthnTest {
         assertArrayEquals(attObj, Base64.getUrlDecoder().decode(resp["attestationObject"]!!.jsonPrimitive.content))
         assertArrayEquals(cdj.toByteArray(), Base64.getUrlDecoder().decode(resp["clientDataJSON"]!!.jsonPrimitive.content))
         assertEquals(WebAuthn.COSE_ALG_ES256, resp["publicKeyAlgorithm"]!!.jsonPrimitive.content.toInt())
-        // Chrome 必填：transports 数组 + 顶层 clientExtensionResults 对象
-        assertTrue(resp["transports"]!!.jsonArray.isNotEmpty())
+        // Chrome 必填：transports 数组（非空即可）+ 顶层 clientExtensionResults 对象。
+        // transports 内容必须是 ["internal"] —— 印迹只在本机签名，不提供 hybrid；
+        // 曾误写 ["internal","hybrid"] 是对 RP 谎报能力（跨设备流程会列出该凭据然后失败）。
+        assertEquals(
+            listOf("internal"),
+            resp["transports"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
         assertTrue(reg["clientExtensionResults"]!!.jsonObject.isEmpty())
 
         val sig = WebAuthn.signAssertion(kp.private.encoded, WebAuthn.assertionAuthData(rpId, 1), cdj)

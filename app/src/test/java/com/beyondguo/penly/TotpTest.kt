@@ -3,6 +3,7 @@ package com.beyondguo.penly
 import com.beyondguo.penly.crypto.Totp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -211,6 +212,35 @@ class TotpTest {
         assertThrows(IllegalArgumentException::class.java) {
             Totp.parseInput("otpauth://weird/x?secret=JBSWY3DPEHPK3PXP")
         }
+    }
+
+    /**
+     * Passkey 跨设备码（FIDO:/ + base10 CBOR）必须被单独识别，
+     * 提示文案要指向"扫错码"而非"格式错"。
+     * 若不加这条分支，会落到 normalizeBase32 报「密钥含非 base32 字符」——
+     * 用户完全无法据此判断该怎么做（2026-09-20 实测踩到，FIDO hybrid 载荷确实非 base32）。
+     */
+    @Test
+    fun fido_hybrid_qr_code_rejected_withDedicatedMessage() {
+        val e = assertThrows(IllegalArgumentException::class.java) {
+            Totp.parseInput("FIDO:/0782413389260407027892396947200830109947622896628611305147669918")
+        }
+        val msg = e.message ?: ""
+        assertTrue("提示应说明是 Passkey 跨设备码：$msg", msg.contains("Passkey"))
+        assertTrue("提示应给出替代做法：$msg", msg.contains("系统凭据管理器"))
+    }
+
+    /** 前缀大小写不敏感（规范写 FIDO:/，但扫码内容不应因大小写放行到 base32 分支） */
+    @Test
+    fun fido_hybrid_prefix_isCaseInsensitive() {
+        assertThrows(IllegalArgumentException::class.java) { Totp.parseInput("fido:/0000") }
+    }
+
+    /** 反向保护：裸 base32 密钥不能被上面这条分支误伤 */
+    @Test
+    fun bare_base32_stillAccepted_afterFidoGuard() {
+        val p = Totp.parseInput("JBSWY3DPEHPK3PXP")
+        assertEquals("JBSWY3DPEHPK3PXP", p.secret)
     }
 
     /**

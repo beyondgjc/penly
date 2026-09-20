@@ -142,11 +142,22 @@ object Totp {
      *    静默回落默认会生成与网站参数不一致的码，且用户无从发现）；
      *    **链接 type 段校验**：`otpauth://hotp/`（计数器型，无 period 语义）与未知类型
      *    一律拒绝——把 HOTP 密钥当 TOTP 导入会生成永远对不上的码。
+     * 3) `FIDO:/` 开头的 Passkey 跨设备码：**单独识别并给出专属提示**（见下），
+     *    不落入 base32 校验（否则会误报「密钥含非 base32 字符」）。
      * 非法输入抛 IllegalArgumentException（由 UI 层转为错误提示）。
      */
     fun parseInput(raw: String): Params {
         val s = raw.trim()
         require(s.isNotEmpty()) { "密钥为空" }
+        // Passkey 跨设备二维码（FIDO CTAP 2.2 §11.5 hybrid transport）：
+        // 载荷是 `FIDO:/` + base10 编码的 CBOR（33B 压缩 P-256 公钥 + 16B QR secret +
+        // 隧道域名 + 时间戳），与 TOTP 的 base32 毫无关系。
+        // 若不单独识别，会一路落到 normalizeBase32 报「密钥含非 base32 字符」——
+        // 用户看到的是"格式错"，真实原因是"扫错码/用错入口"（2026-09-20 实测踩到）。
+        // 注意：这不是 TOTP 能处理的输入，且印迹不实现 hybrid 验证器，只能引导用户。
+        require(!s.startsWith("FIDO:", ignoreCase = true)) {
+            "这是 Passkey 跨设备码，印迹暂不支持扫码，请用系统凭据管理器"
+        }
         if (!s.startsWith("otpauth://", ignoreCase = true)) {
             return Params(normalizeBase32(s), DEFAULT_DIGITS, DEFAULT_PERIOD)
         }

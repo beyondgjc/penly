@@ -174,7 +174,11 @@ object WebAuthn {
      *   （Android 侧 kp.public.encoded 即 SPKI DER）
      * - authenticatorData：与 attObj 内 authData 逐字节一致（Chrome 同样对比）
      * - publicKeyAlgorithm：必须等于 Chrome 从 attObj 解析出的算法（-7）
-     * - transports：必填数组（如 ["internal","hybrid"]）
+     * - transports：必填数组且非空（Chrome 只校验非空，单值合法）。
+     *   **只声明 "internal"**：印迹只在本机签名，不参与跨设备 hybrid
+     *   （hybrid 验证器侧无公开 API，见 2026-09-20 调研）。
+     *   曾误写 ["internal","hybrid"] —— 那是对 RP 谎报能力：RP 会把该凭据
+     *   标记为可通过另一台设备使用，用户在跨设备流程里点选后必然失败。
      * - clientExtensionResults：必填对象（顶层字段，非 response 内），传 {}
      */
     fun registrationJson(
@@ -190,7 +194,7 @@ object WebAuthn {
             "\"attestationObject\":\"${b64Url(attObj)}\"," +
             "\"clientDataJSON\":\"${b64Url(clientData.toByteArray(Charsets.UTF_8))}\"," +
             "\"publicKeyAlgorithm\":$COSE_ALG_ES256," +
-            "\"transports\":[\"internal\",\"hybrid\"]}," +
+            "\"transports\":[\"internal\"]}," +
             "\"clientExtensionResults\":{}}"
 
     /** PublicKeyCredential 断言响应 */
