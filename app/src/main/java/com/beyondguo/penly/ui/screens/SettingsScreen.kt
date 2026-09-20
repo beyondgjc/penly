@@ -357,34 +357,14 @@ fun SettingsScreen(
                         )
                     },
                 )
-                // 入口刻意中性、无状态标记、无强调样式：
-                // 任何"已开启"提示都会让旁人一眼看出存在第二套数据
+                // 安全中心（二级页）：低频功能入口统一收纳（高级保护/安全体检/Passkey/遗产交接/TEE 信封）。
+                // 主页「安全」组只留高频开关；「立即锁定」永远不进二级页（应急动作不许多一跳）。
                 SettingRow(
-                    title = "高级保护",
-                    subtitle = "另一把钥匙，打开另一份数据",
-                    onClick = { onOpen("protection") },
-                )
-                // 首个联网功能：入口处即点明"联网"，不隐藏
-                SettingRow(
-                    title = "安全体检",
-                    subtitle = "检查密码是否出现在泄露库中（联网）",
-                    onClick = { onOpen("scan") },
-                )
-                // Passkey 保险库（v5.0-②）：注册/签名在系统凭据流程内，此处只做查看与清理
-                SettingRow(
-                    title = "Passkey 保险库",
-                    subtitle = "管理保存的通行密钥（Android 14+）",
-                    onClick = { onOpen("passkeys") },
-                )
-                // 遗产交接（v5.0 #43/#44）：Shamir 分片设置与恢复包生成
-                SettingRow(
-                    title = "遗产交接",
-                    subtitle = "为信任的人准备恢复路径（2-of-3 分片）",
-                    onClick = { onOpen("heirsetup") },
+                    title = "安全中心",
+                    subtitle = "高级保护 · 安全体检 · Passkey · 遗产交接 · TEE 信封",
+                    onClick = { onOpen("securityhub") },
                 )
             }
-
-            EnvelopeSection(repo)
 
             SectionTitle("数据")
             SettingCard {

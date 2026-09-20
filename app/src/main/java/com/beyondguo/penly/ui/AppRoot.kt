@@ -41,6 +41,7 @@ import com.beyondguo.penly.data.VaultRepository
 import com.beyondguo.penly.penly
 import com.beyondguo.penly.ui.screens.AdvancedProtectionScreen
 import com.beyondguo.penly.ui.screens.ChangePwdScreen
+import com.beyondguo.penly.ui.screens.SecurityHubScreen
 import com.beyondguo.penly.ui.screens.SecurityScanScreen
 import com.beyondguo.penly.ui.screens.DetailScreen
 import com.beyondguo.penly.ui.screens.EditScreen
@@ -62,6 +63,7 @@ private object Routes {
     const val SCAN = "scan"
     const val PASSKEYS = "passkeys"
     const val HEIR_SETUP = "heirsetup"
+    const val SECURITY_HUB = "securityhub"
 
     fun edit(itemId: String = "") = "edit?itemId=$itemId"
 }
@@ -230,6 +232,13 @@ private fun ReadyRoot(repo: VaultRepository, onVaultChanged: () -> Unit) {
             composable(Routes.HEIR_SETUP) {
                 HeirSetupScreen(
                     repo = repo,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(Routes.SECURITY_HUB) {
+                SecurityHubScreen(
+                    repo = repo,
+                    onOpen = { navController.navigate(it) },
                     onBack = { navController.popBackStack() },
                 )
             }
