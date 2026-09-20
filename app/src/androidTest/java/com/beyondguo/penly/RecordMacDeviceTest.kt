@@ -3,6 +3,7 @@ package com.beyondguo.penly
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.beyondguo.penly.crypto.SessionManager
+import com.beyondguo.penly.data.UnlockResult
 import com.beyondguo.penly.data.VaultMeta
 import com.beyondguo.penly.data.VaultStore
 import kotlinx.coroutines.runBlocking
@@ -43,14 +44,24 @@ class RecordMacDeviceTest {
         store.writeItems(slot, items)
     }
 
+    /** 当前库 schema：V3=GCM（独立 MAC 恒空，完整性由 tag+AAD 承担）/ V2=CBC+encrypt-then-MAC */
+    private suspend fun currentSchema(): Int =
+        store.readMeta(SessionManager.activeSlotOrNull()!!)!!.schemaVersion
+
     @Test
     fun saveEntry_writesFourMacs_andRoundTrips() = runBlocking {
         val id = seed()
         val item = repo.item(id)!!
-        assertTrue(item.accountMac.isNotBlank())
-        assertTrue(item.secretMac.isNotBlank())
-        assertTrue(item.noteMac.isNotBlank())
-        assertTrue(item.totpMac.isNotBlank())
+        // v5.0 起新库为 SCHEMA_V3（GCM）：独立 MAC 四元组恒空；SCHEMA_V2 才写 MAC。
+        // 完整性机制的存在性断言按 schema 分派。
+        if (currentSchema() == VaultMeta.SCHEMA_V3) {
+            assertTrue(item.accountEnc.isNotBlank())
+        } else {
+            assertTrue(item.accountMac.isNotBlank())
+            assertTrue(item.secretMac.isNotBlank())
+            assertTrue(item.noteMac.isNotBlank())
+            assertTrue(item.totpMac.isNotBlank())
+        }
         val e = repo.decryptItem(item)
         assertEquals("acc", e.account)
         assertEquals("sec", e.secret)
@@ -65,9 +76,9 @@ class RecordMacDeviceTest {
         mutateCurrentRow(id) { it.copy(accountEnc = "x" + it.accountEnc.drop(1)) }
         val err = repo.changeMasterPassword("master123456", "master654321")
         assertTrue("应报完整性校验失败：$err", err?.contains("完整性") == true)
-        // 数据保持原状：原密码仍可解锁
+        // 数据保持原状：原密码仍可解锁（unlock 自 v5.0 起返回 UnlockResult 三态）
         repo.lock()
-        assertTrue(repo.unlock("master123456"))
+        assertEquals(UnlockResult.Success, repo.unlock("master123456"))
     }
 
     @Test
@@ -75,9 +86,13 @@ class RecordMacDeviceTest {
         val id = seed()
         mutateCurrentRow(id) { it.copy(accountMac = "", secretMac = "", noteMac = "", totpMac = "") }
         assertNull(repo.changeMasterPassword("master123456", "master654321"))
-        // 改密后记录被重加密并补上 Mac
+        // 改密后记录被重加密：V2 路径补上 Mac；V3（GCM）MAC 恒空，断言密文存在
         val item = repo.item(id)
         assertNotNull(item)
-        assertTrue(item!!.accountMac.isNotBlank())
+        if (currentSchema() == VaultMeta.SCHEMA_V3) {
+            assertTrue(item!!.accountEnc.isNotBlank())
+        } else {
+            assertTrue(item!!.accountMac.isNotBlank())
+        }
     }
 }

@@ -10,6 +10,13 @@
 # errorprone 注解体系还会引用 JDK compile-only 的 javax.lang.model（Android 无此类）
 -dontwarn javax.lang.model.element.**
 
+# ---- androidx.tracing 必须 keep（2026-09-20 实锤）----
+# AndroidJUnitRunner.onCreate 直接调用 androidx.tracing.Trace（无 catch 包裹）。
+# v5.0 主包依赖图变化（credentials/bcprov 加入）后，测试包 R8 把该类 shrink 掉，
+# runner 启动即崩 NoClassDefFoundError → UTP 判定 0 tests（连崩溃都不报，极隐蔽）。
+# 测试包不上架，整包 keep 代价可忽略。
+-keep class androidx.tracing.** { *; }
+
 # ---- 跨 APK 混淆命名一致性（关键）----
 # AGP 对 app 与 androidTest 各跑一次相互独立的 R8：测试包里自带的库副本
 # （如 coroutines）会被测试包 R8 起一套自造名（实测 i2.h），运行时类加载

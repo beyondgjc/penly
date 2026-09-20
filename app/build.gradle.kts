@@ -133,6 +133,10 @@ dependencies {
     testImplementation("com.microsoft.onnxruntime:onnxruntime:1.20.0")
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    // androidx.test:runner 1.6.2 的 AndroidJUnitRunner.onCreate 直接调用 androidx.tracing.Trace，
+    // 但其 pom 把 tracing 声明为 compileOnly 可选依赖，不随测试 APK 进包 → runner 启动即崩
+    // NoClassDefFoundError，UTP 只静默报 0 tests（2026-09-20 实锤）。必须显式带上：
+    androidTestImplementation("androidx.tracing:tracing:1.3.0")
     debugImplementation(libs.androidx.ui.tooling)
 }
 

@@ -38,6 +38,55 @@
 # keep 住整包：不做合并/重排/改名，两端签名天然一致。体积代价 ~几 KB。
 -keep class kotlin.jvm.internal.** { *; }
 
+# ---- kotlin / kotlinx 全家族原名钉子（2026-09-20，扩展自上面 kotlin.jvm.internal）----
+# androidTest R8 的 --lib 是「主包产物」：主包里被改名的类，原名在 library 中不存在，
+# 而 androidTest 独有的库（androidx.test.platform 等）按原名引用它们 → 运行时
+# NoClassDefFoundError（首爆 kotlin.LazyKt，TestDirCalculator.<init>；tracing 同款
+# 已由下面的钉子修掉）。这些库的依赖链（kotlin.* / kotlinx.coroutines.*）不可能
+# 枚举穷尽，故整族 keep：主包 mapping 全原名 → 测试包 applymapping/剔除零冲突，
+# 原名类在主包 dex 恒可达。体积代价 ~2-3MB（91MB 的包无感），无安全影响（纯语言运行时）。
+-keep class kotlin.** { *; }
+-keep class kotlinx.** { *; }
+
+# ---- Compose 编译器的 $stable 标记字段（2026-09-20）----
+# androidTest 与主包同用 Compose 编译器：测试类的 <clinit> 按原名引用主包类的
+# int $stable 字段（mapping 里没有被删字段的记录，测试包无法对齐一个不存在的
+# 字段）。主包 R8 删掉该字段 → NoSuchFieldError（实测：RecordMacDeviceTest
+# .<clinit> 引用 data 包混淆类的 $stable）。
+# 注意 keepclassmembernames 只防改名不防删除（实测无效），必须 keepclassmembers
+# 把字段钉成 root：不删不改名。类名照常混淆，测试包经 applymapping 对齐。
+# 体积代价每类一个 int，可忽略。
+-keepclassmembers class com.beyondguo.penly.** { int $stable; }
+
+# ---- androidx.tracing：跨 APK 混淆对齐的钉子（2026-09-20）----
+# androidx.test:runner 1.6.2 的 AndroidJUnitRunner.onCreate 直接调用
+# androidx.tracing.Trace（其 pom 把 tracing 声明为 compileOnly 可选依赖）。
+# v5.0 加 credentials 后 tracing 升至 2.0.0（Kotlin 重写，类变多），主包 mapping
+# 里一批 tracing 改名记录（-> L1.a 等）经 -applymapping 强加给 androidTest R8，
+# 与测试包自身命名空间冲突 → 测试包 R8 把整个 tracing 包牺牲掉 → runner 启动
+# 即崩 NoClassDefFoundError，UTP 只静默报 0 tests（连报错都没有，极隐蔽，
+# 全量 clean 重建后依旧复现，dex class_defs 解析实锤 0 个 tracing 类）。
+# 主包整包 keep：mapping 全部写成原名，测试包 applymapping 零冲突，
+# 配合 proguard-test-rules.pro 的同款 keep，测试 APK 稳定携带 tracing。
+# 体积代价 ~百 KB 级（tracing 2.0 约 80 个类）。
+-keep class androidx.tracing.** { *; }
+
+# ---- androidTest 直连面整包 keep（2026-09-20）----
+# 主包开优化（proguard-android-optimize.txt）后 R8 做参数收窄：VaultStore
+# .<init>(Context) 在 dex 里的实际签名被收窄成 (PenlyApp)V、suspend 方法的
+# Continuation 参数被收窄成 ContinuationImpl（mapping residualsignature 实锤）。
+# -applymapping 只对齐名字、对不齐签名，测试 dex 按原签名调用 → 运行时
+# NoSuchMethodError（实测 RecordMacDeviceTest.<init> → data.c.<init>；与 v4.0
+# Intrinsics 参数重排同根，都是「签名级」变化，名字对齐救不了）。
+# 逐成员钉不可穷尽（方法也能被收窄），故测试直连的自家包整包 keep：
+# 原名 + 签名冻结。范围 = 全部设备测试 import 的自家包 + PenlyApp
+# （app.repo 等属性访问也走原名 getter）。
+-keep class com.beyondguo.penly.PenlyApp { *; }
+-keep class com.beyondguo.penly.data.** { *; }
+-keep class com.beyondguo.penly.crypto.** { *; }
+-keep class com.beyondguo.penly.security.** { *; }
+-keep class com.beyondguo.penly.search.** { *; }
+
 # ---- release 剥离 android.util.Log ----
 # 为什么：logcat 对本应用是侧信道。VaultRepository 重建检索索引时会把"当前是 A 槽位
 # 还是 B 槽位"打进 logcat（检索索引已重建：slot=A/B），任何有 adb 读日志权限的第三方
