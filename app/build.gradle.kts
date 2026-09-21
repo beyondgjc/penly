@@ -86,6 +86,10 @@ android {
 
 dependencies {
 
+    // 加密内核（纯 JVM，无 Android 依赖）：原语 + 信封 + 会话 + 容器/档位。
+    // 包名与 app 内原 crypto 包一致（com.beyondguo.penly.crypto），故搬迁无需改任何 import。
+    implementation(project(":crypto-core"))
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)

@@ -5,8 +5,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** 未解锁时访问会话密钥抛出 */
-class VaultLockedException(message: String = "印迹未解锁") : Exception(message)
+// VaultLockedException 已随加密内核搬到 crypto-core（同包，见 core 的 KeySession.kt），
+// 此处不再重复声明 —— 同包同名会编译冲突。
 
 /**
  * 会话密钥管理：密钥仅驻内存，锁定即清除。
@@ -15,6 +15,9 @@ class VaultLockedException(message: String = "印迹未解锁") : Exception(mess
  * v2 起额外持有**当前生效槽位** [activeSlot]。该值同样只驻内存：
  * 一旦写入 SavedState / DataStore / 备份，"哪个槽位是真库"这一秘密即告泄露，
  * 影子保险库的不可证伪性随之失效（详见《印迹Android_v2技术方案.md》§3.1 边界）。
+ *
+ * 与 core 的 [KeySession] 的关系：本类是**宿主侧状态机**（密钥 + 槽位），
+ * 本批（Phase 0）刻意**不动**它——改状态机属高风险动作，另行一批。
  */
 object SessionManager {
 

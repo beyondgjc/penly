@@ -10,18 +10,31 @@ import org.bouncycastle.crypto.generators.Argon2BytesGenerator
 import org.bouncycastle.crypto.params.Argon2Parameters
 
 /**
- * 契约 v2 密码学原语（2026-09-18）——格式与参数定义见工作区
- * 《印迹_跨端契约v2_地基工程.md》，两端实现以该文档 + 固定向量为闸门。
+ * 认证加密原语集：HKDF-SHA256 / AES-256-GCM / Argon2id / Base64。
+ *
+ * 命名沿革：本类原名 `CryptoV2` —— 名字里的 "V2" 指的是**跨端契约版本**，
+ * 不是"第二版实现"。它实际是这一套原语的容器，故 2026-09-21 正名为 [Aead]
+ * （参数档位见 [Profile]，自描述容器见 [Container]）。
+ *
+ * 格式与参数定义见工作区《印迹_跨端契约v2_地基工程.md》，
+ * 两端实现以该文档 + 固定向量为闸门（[ContractV2VectorTest]）。
  *
  * 与 [CryptoEngine]（v1）的关系：完全独立的命名空间。v1 原语（CBC/verifyRecordMac）
  * 仅服务 v1 备份文件与存量数据的读取/迁移，不做任何扩展。
  */
-object CryptoV2 {
+object Aead {
 
     /** GCM 载荷 = nonce(12B) || ciphertext || tag(16B) */
     const val NONCE_BYTES = 12
     const val TAG_BITS = 128
 
+    /**
+     * 认证失败（GCM tag / AAD 不符）。
+     *
+     * 保持为 [Aead] 的嵌套类**是有意的**：既有代码大量使用 `Aead.IntegrityException`
+     * 形式（原 `CryptoV2.IntegrityException`），移到顶层会波及十余处引用而无收益。
+     * 语义说明见 Exceptions.kt 的总表。
+     */
     class IntegrityException(message: String = "数据完整性校验失败") : Exception(message)
 
     // ---------------- HKDF-SHA256（RFC 5869） ----------------
@@ -56,9 +69,15 @@ object CryptoV2 {
         return okm
     }
 
-    /** 契约域标签表（《契约v2》§3）——新用途必须先注册，禁止复用既有标签 */
+    /**
+     * 契约域标签表（《契约v2》§3）——新用途必须先注册，禁止复用既有标签。
+     *
+     * ⚠️ **常量的值（字符串）是不可变更的线上格式**，改名只动了 Kotlin 标识符：
+     * `ENC` 的值仍是 `"yinji-enc-v2"`，两端靠这个字符串派生子密钥，
+     * 改值等于让所有存量数据解不开。名字里的 "v2" 从标识符移到注释里。
+     */
     object Domains {
-        const val ENC_V2 = "yinji-enc-v2"
+        const val ENC = "yinji-enc-v2"
     }
 
     /** 用途子密钥派生：key32 语义隔离（无 salt 变体，info 即域标签） */

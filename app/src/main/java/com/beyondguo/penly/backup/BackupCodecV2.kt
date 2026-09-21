@@ -1,7 +1,7 @@
 package com.beyondguo.penly.backup
 
 import com.beyondguo.penly.crypto.CryptoEngine
-import com.beyondguo.penly.crypto.CryptoV2
+import com.beyondguo.penly.crypto.Aead
 import com.beyondguo.penly.data.PlainEntry
 import com.beyondguo.penly.data.VaultItemV2
 import kotlinx.serialization.SerialName
@@ -110,9 +110,9 @@ object BackupCodecV2 {
 
     private fun deriveKey32(masterPassword: ByteArray, kdf: KdfParamsV2): ByteArray {
         if (kdf.algo != KDF_ALGO) throw BackupFormatException("KDF 不支持（${kdf.algo}）")
-        return CryptoV2.argon2id(
+        return Aead.argon2id(
             password = masterPassword,
-            salt = CryptoV2.unb64(kdf.saltB64),
+            salt = Aead.unb64(kdf.saltB64),
             memoryKiB = kdf.memoryKiB,
             iterations = kdf.iterations,
             parallelism = kdf.parallelism,
@@ -135,7 +135,7 @@ object BackupCodecV2 {
     /** 单字段加密：空串原样返回（无内容），否则 GCM(subKey) → base64(nonce||ct||tag) */
     private fun enc(plain: String, field: String, itemId: String, subKey: ByteArray): String =
         if (plain.isEmpty()) ""
-        else CryptoV2.b64(CryptoV2.gcmEncrypt(subKey, plain.utf8(), aad(field, itemId)))
+        else Aead.b64(Aead.gcmEncrypt(subKey, plain.utf8(), aad(field, itemId)))
 
     fun encryptEntry(e: PlainEntry, subKey: ByteArray): VaultItemV2 = VaultItemV2(
         id = e.id,
@@ -175,11 +175,11 @@ object BackupCodecV2 {
     ): String {
         require(password.isNotEmpty()) { "备份密码不能为空" }
         val salt = CryptoEngine.randomBytes(16)
-        val key32 = CryptoV2.argon2id(
+        val key32 = Aead.argon2id(
             password = password.utf8(), salt = salt,
             memoryKiB = KDF_MEMORY_KIB, iterations = KDF_ITERATIONS, parallelism = KDF_PARALLELISM,
         )
-        val subKey = CryptoV2.subKey(key32, CryptoV2.Domains.ENC_V2)
+        val subKey = Aead.subKey(key32, Aead.Domains.ENC)
         val file = BackupFileV2(
             format = FORMAT,
             version = VERSION,
@@ -188,13 +188,13 @@ object BackupCodecV2 {
                 contractVersion = 2,
                 createdAt = vaultCreatedAt,
                 count = entries.size,
-                verify = CryptoV2.b64(CryptoV2.gcmEncrypt(key32, VERIFY_PLAINTEXT.utf8(), VERIFY_AAD)),
+                verify = Aead.b64(Aead.gcmEncrypt(key32, VERIFY_PLAINTEXT.utf8(), VERIFY_AAD)),
                 openid = openid,
             ),
             crypto = BackupCryptoV2(
                 masterRef = masterRef,
-                kdf = KdfParamsV2(KDF_ALGO, KDF_MEMORY_KIB, KDF_ITERATIONS, KDF_PARALLELISM, CryptoV2.b64(salt)),
-                cipher = CipherParamsV2(CIPHER_ALGO, CryptoV2.NONCE_BYTES),
+                kdf = KdfParamsV2(KDF_ALGO, KDF_MEMORY_KIB, KDF_ITERATIONS, KDF_PARALLELISM, Aead.b64(salt)),
+                cipher = CipherParamsV2(CIPHER_ALGO, Aead.NONCE_BYTES),
             ),
             items = entries.map { encryptEntry(it, subKey) },
         )
@@ -220,9 +220,9 @@ object BackupCodecV2 {
         return file
     }
 
-    /** 解密全部条目（导入主路径）。任一字段解不开 → [CryptoV2.IntegrityException] */
+    /** 解密全部条目（导入主路径）。任一字段解不开 → [Aead.IntegrityException] */
     fun decryptItems(file: BackupFileV2, password: String): List<PlainEntry> {
-        val subKey = CryptoV2.subKey(key32Of(file, password), CryptoV2.Domains.ENC_V2)
+        val subKey = Aead.subKey(key32Of(file, password), Aead.Domains.ENC)
         return file.items.map { it.toPlain(subKey) }
     }
 
@@ -250,7 +250,7 @@ object BackupCodecV2 {
 
     private fun dec(payloadB64: String, field: String, itemId: String, subKey: ByteArray): String =
         if (payloadB64.isEmpty()) ""
-        else String(CryptoV2.gcmDecrypt(subKey, CryptoV2.unb64(payloadB64), aad(field, itemId)), Charsets.UTF_8)
+        else String(Aead.gcmDecrypt(subKey, Aead.unb64(payloadB64), aad(field, itemId)), Charsets.UTF_8)
 
     /**
      * 导入前预检（口径同 v1 [BackupCodec.verifyPassword]）：解得开才导入。
@@ -273,9 +273,9 @@ object BackupCodecV2 {
             return e.message
         }
         return try {
-            CryptoV2.gcmDecrypt(key32, CryptoV2.unb64(file.meta.verify), VERIFY_AAD)
+            Aead.gcmDecrypt(key32, Aead.unb64(file.meta.verify), VERIFY_AAD)
             null
-        } catch (_: CryptoV2.IntegrityException) {
+        } catch (_: Aead.IntegrityException) {
             "备份密码错误，无法导入"
         } catch (_: Exception) {
             "备份校验失败，文件可能已损坏"

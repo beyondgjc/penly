@@ -17,9 +17,14 @@ class WrongPasswordException(message: String = "主密码错误") : Exception(me
 class KeyUnavailableException(message: String = "设备安全密钥不可用，需从备份恢复") : Exception(message)
 
 /**
- * key32 的本机 TEE 信封（v5.0 地基工程，《印迹_跨端契约v2_地基工程.md》§4）。
+ * 双层信封：把 key32 用「设备因素 × 密码因素」两层共同保护（v5.0 地基工程，
+ * 《印迹_跨端契约v2_地基工程.md》§4）。
  *
- * 解锁链：主密码 → Argon2id(64MiB) → KEK → [KeyWrapper]（TEE）unwrap → key32
+ * 解锁链：主密码 → Argon2id(64MiB) → KEK → [KeyWrapper].unwrap → key32
+ *
+ * **命名**：本类原名 `KeystoreEnvelope`。改名理由——它的语义是"双层信封"，
+ * 与 Keystore 并无耦合（设备层完全由 [KeyWrapper] 接缝抽象，测试里就换成软件实现）。
+ * 原名字会让人误以为它绑死了 AndroidKeyStore。
  *
  * 严格双因素语义：
  * - 信封内容是 KEK（需主密码派生），TEE 离线/拆机解不出
@@ -28,18 +33,26 @@ class KeyUnavailableException(message: String = "设备安全密钥不可用，�
  * - 失效语义：换机/恢复出厂 → TEE 密钥销毁 → 信封永久不可解 → 唯一出路 = 备份恢复
  *   （产品配套：启用信封前强制「已完成一次导出」检查）
  *
- * 持久化：[Envelope] 三字段由调用方落 DataStore（后续任务接入 VaultStore）。
+ * 持久化：[Envelope] 三字段由调用方落 DataStore（见 VaultStore 的 `ve_` 键）。
  */
-object KeystoreEnvelope {
+object DoubleEnvelope {
 
     private val AAD_INNER = "yinji-kek-v1".toByteArray()      // TEE 层（设备因素）
     private val AAD_OUTER = "yinji-envelope-v1".toByteArray() // KEK 层（密码因素）
     private val RANDOM = SecureRandom()
 
-    /** 本机层 KEK 参数（仅 Android 本机解锁链，不进跨端契约） */
-    private const val KEK_MEMORY_KIB = 64 * 1024
-    private const val KEK_ITERATIONS = 3
-    private const val KEK_PARALLELISM = 1
+    /**
+     * 本机层 KEK 档位（仅 Android 本机解锁链，不进跨端契约）。
+     *
+     * 2026-09-21：原先这里是三个硬编码常量（64 MiB / t=3 / p=1），
+     * 现改走 [Profile.SENSITIVE] —— 让"参数档位"这套抽象有第一个真实使用者，
+     * 而不是写完没人用的空壳。
+     *
+     * ⚠️ **数值一字未变**（profile 的 SENSITIVE 就是照这三个数定的），
+     * 否则所有存量信封都解不开。这层等价关系由 `ProfileTest.sensitive matches
+     * penly kek exactly` 钉住。
+     */
+    private val KEK_PROFILE = Profile.SENSITIVE
 
     @Serializable
     data class Envelope(
@@ -56,18 +69,12 @@ object KeystoreEnvelope {
      */
     fun seal(wrapper: KeyWrapper, masterPassword: ByteArray, key32: ByteArray): Envelope {
         val saltLocal = ByteArray(16).also { RANDOM.nextBytes(it) }
-        val kek = CryptoV2.argon2id(
-            password = masterPassword,
-            salt = saltLocal,
-            memoryKiB = KEK_MEMORY_KIB,
-            iterations = KEK_ITERATIONS,
-            parallelism = KEK_PARALLELISM,
-        )
+        val kek = KEK_PROFILE.derive(masterPassword, saltLocal)
         val inner = wrapper.wrap(key32, AAD_INNER)
-        val outer = CryptoV2.gcmEncrypt(kek, inner, AAD_OUTER)
+        val outer = Aead.gcmEncrypt(kek, inner, AAD_OUTER)
         return Envelope(
-            saltLocalB64 = CryptoV2.b64(saltLocal),
-            payloadB64 = CryptoV2.b64(outer),
+            saltLocalB64 = Aead.b64(saltLocal),
+            payloadB64 = Aead.b64(outer),
             wrapperTag = wrapper.tag,
         )
     }
@@ -79,20 +86,14 @@ object KeystoreEnvelope {
      *   统一转 [KeyUnavailableException] —— 语义为「走备份恢复」
      */
     fun unseal(wrapper: KeyWrapper, masterPassword: ByteArray, envelope: Envelope): ByteArray {
-        val kek = CryptoV2.argon2id(
-            password = masterPassword,
-            salt = CryptoV2.unb64(envelope.saltLocalB64),
-            memoryKiB = KEK_MEMORY_KIB,
-            iterations = KEK_ITERATIONS,
-            parallelism = KEK_PARALLELISM,
-        )
+        val kek = KEK_PROFILE.derive(masterPassword, Aead.unb64(envelope.saltLocalB64))
         val inner = try {
-            CryptoV2.gcmDecrypt(
+            Aead.gcmDecrypt(
                 kek,
-                CryptoV2.unb64(envelope.payloadB64),
+                Aead.unb64(envelope.payloadB64),
                 AAD_OUTER,
             )
-        } catch (e: CryptoV2.IntegrityException) {
+        } catch (e: Aead.IntegrityException) {
             throw WrongPasswordException()
         }
         return try {

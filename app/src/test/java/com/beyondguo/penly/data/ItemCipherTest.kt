@@ -1,7 +1,7 @@
 package com.beyondguo.penly.data
 
 import com.beyondguo.penly.crypto.CryptoEngine
-import com.beyondguo.penly.crypto.CryptoV2
+import com.beyondguo.penly.crypto.Aead
 import com.beyondguo.penly.crypto.MacVerificationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,10 +25,10 @@ class ItemCipherTest {
 
     /** GCM 密文中间字节翻转（一定变化：xor 0x01），构造篡改样本 */
     private fun tamperB64(dataB64: String): String {
-        val raw = CryptoV2.unb64(dataB64)
+        val raw = Aead.unb64(dataB64)
         val i = raw.size / 2
         raw[i] = (raw[i].toInt() xor 0x01).toByte()
-        return CryptoV2.b64(raw)
+        return Aead.b64(raw)
     }
 
     // ---------------- V3：字段级往返与结构 ----------------

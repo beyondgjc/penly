@@ -2,7 +2,7 @@ package com.beyondguo.penly.backup
 
 import com.beyondguo.penly.backup.BackupCodecV2.ParsedBackup
 import com.beyondguo.penly.crypto.CryptoEngine
-import com.beyondguo.penly.crypto.CryptoV2
+import com.beyondguo.penly.crypto.Aead
 import com.beyondguo.penly.data.PlainEntry
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -99,7 +99,7 @@ class BackupCodecV2Test {
         val swapped = file.copy(items = listOf(
             a.copy(secretEnc = a.passkeyEnc, passkeyEnc = a.secretEnc),
         ))
-        assertThrows(CryptoV2.IntegrityException::class.java) {
+        assertThrows(Aead.IntegrityException::class.java) {
             BackupCodecV2.decryptItems(swapped, pwd)
         }
     }
@@ -125,7 +125,7 @@ class BackupCodecV2Test {
     @Test
     fun `wrong password rejected`() {
         assertNotNull(BackupCodecV2.verifyPassword(fixtureText, "wrong-pwd"))
-        assertThrows(CryptoV2.IntegrityException::class.java) {
+        assertThrows(Aead.IntegrityException::class.java) {
             BackupCodecV2.decryptItems(BackupCodecV2.decode(fixtureText), "wrong-pwd")
         }
     }
@@ -139,7 +139,7 @@ class BackupCodecV2Test {
                 if (i == 0) item.copy(accountEnc = flipB64(item.accountEnc)) else item
             },
         )
-        assertThrows(CryptoV2.IntegrityException::class.java) {
+        assertThrows(Aead.IntegrityException::class.java) {
             BackupCodecV2.decryptItems(badItems, pwd)
         }
         // 篡改 verify 槽位：预检必须失败
@@ -157,7 +157,7 @@ class BackupCodecV2Test {
             b.copy(accountEnc = a.accountEnc),
             a.copy(accountEnc = b.accountEnc),
         ))
-        assertThrows(CryptoV2.IntegrityException::class.java) {
+        assertThrows(Aead.IntegrityException::class.java) {
             BackupCodecV2.decryptItems(crossItem, pwd)
         }
         // 同条目跨字段搬移（AAD 含字段名）
@@ -165,7 +165,7 @@ class BackupCodecV2Test {
             a.copy(accountEnc = a.secretEnc, secretEnc = a.accountEnc),
             b,
         ))
-        assertThrows(CryptoV2.IntegrityException::class.java) {
+        assertThrows(Aead.IntegrityException::class.java) {
             BackupCodecV2.decryptItems(crossField, pwd)
         }
     }

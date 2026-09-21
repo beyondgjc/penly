@@ -23,7 +23,7 @@ class ContractV2VectorTest {
         val ikm = ByteArray(22) { 0x0b }
         val salt = hex("000102030405060708090a0b0c")
         val info = hex("f0f1f2f3f4f5f6f7f8f9")
-        val okm = CryptoV2.hkdfSha256(ikm, salt, info, 42)
+        val okm = Aead.hkdfSha256(ikm, salt, info, 42)
         assertEquals(
             "3cb25f25faacd57a90434f64d0362f2a" +
                 "2d2d0a90cf1a5a4c5db02d56ecc4c5bf" +
@@ -36,9 +36,9 @@ class ContractV2VectorTest {
     @Test
     fun `subkey domain separation`() {
         val key32 = hex("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
-        val a = CryptoV2.subKey(key32, CryptoV2.Domains.ENC_V2)
-        val a2 = CryptoV2.subKey(key32, CryptoV2.Domains.ENC_V2)
-        val b = CryptoV2.subKey(key32, "yinji-enc-v3-future")
+        val a = Aead.subKey(key32, Aead.Domains.ENC)
+        val a2 = Aead.subKey(key32, Aead.Domains.ENC)
+        val b = Aead.subKey(key32, "yinji-enc-v3-future")
         assertEquals(32, a.size)
         assertArrayEquals(a, a2)
         assertFalse(a.contentEquals(b))
@@ -51,7 +51,7 @@ class ContractV2VectorTest {
         val salt = ByteArray(16) { 0x02 }
         val secret = ByteArray(8) { 0x03 }
         val ad = ByteArray(12) { 0x04 }
-        val tag = CryptoV2.argon2id(
+        val tag = Aead.argon2id(
             password = pwd, salt = salt,
             memoryKiB = 32, iterations = 3, parallelism = 4,
             outLen = 32, secret = secret, associatedData = ad,
@@ -68,9 +68,9 @@ class ContractV2VectorTest {
         val pwd = "master-password".toByteArray()
         val salt1 = ByteArray(16) { 0x11 }
         val salt2 = ByteArray(16) { 0x22 }
-        val k1 = CryptoV2.argon2id(pwd, salt1, memoryKiB = 8192, iterations = 1, parallelism = 1)
-        val k1b = CryptoV2.argon2id(pwd, salt1, memoryKiB = 8192, iterations = 1, parallelism = 1)
-        val k2 = CryptoV2.argon2id(pwd, salt2, memoryKiB = 8192, iterations = 1, parallelism = 1)
+        val k1 = Aead.argon2id(pwd, salt1, memoryKiB = 8192, iterations = 1, parallelism = 1)
+        val k1b = Aead.argon2id(pwd, salt1, memoryKiB = 8192, iterations = 1, parallelism = 1)
+        val k2 = Aead.argon2id(pwd, salt2, memoryKiB = 8192, iterations = 1, parallelism = 1)
         assertEquals(32, k1.size)
         assertArrayEquals(k1, k1b)
         assertFalse(k1.contentEquals(k2))
@@ -79,32 +79,32 @@ class ContractV2VectorTest {
     /** GCM 往返 + 载荷结构（12B nonce + 密文 + 16B tag） */
     @Test
     fun `gcm roundtrip and payload layout`() {
-        val key = CryptoV2.subKey(ByteArray(32) { 7 }, CryptoV2.Domains.ENC_V2)
+        val key = Aead.subKey(ByteArray(32) { 7 }, Aead.Domains.ENC)
         val aad = "account|id-123".toByteArray()
         val plain = "用户名@bank".toByteArray(Charsets.UTF_8)
-        val payload = CryptoV2.gcmEncrypt(key, plain, aad)
-        assertEquals(CryptoV2.NONCE_BYTES, 12)
+        val payload = Aead.gcmEncrypt(key, plain, aad)
+        assertEquals(Aead.NONCE_BYTES, 12)
         assertEquals(plain.size + 12 + 16, payload.size)
-        assertArrayEquals(plain, CryptoV2.gcmDecrypt(key, payload, aad))
+        assertArrayEquals(plain, Aead.gcmDecrypt(key, payload, aad))
     }
 
     /** 篡改拒收：密文翻 1 字节 / AAD 不符 → IntegrityException */
     @Test
     fun `gcm tamper rejection`() {
-        val key = CryptoV2.subKey(ByteArray(32) { 9 }, CryptoV2.Domains.ENC_V2)
+        val key = Aead.subKey(ByteArray(32) { 9 }, Aead.Domains.ENC)
         val aad = "secret|id-1".toByteArray()
-        val payload = CryptoV2.gcmEncrypt(key, "secret".toByteArray(), aad)
+        val payload = Aead.gcmEncrypt(key, "secret".toByteArray(), aad)
 
         val flipped = payload.copyOf().also { it[it.size - 3] = (it[it.size - 3].toInt() xor 1).toByte() }
-        assertThrows(CryptoV2.IntegrityException::class.java) { CryptoV2.gcmDecrypt(key, flipped, aad) }
+        assertThrows(Aead.IntegrityException::class.java) { Aead.gcmDecrypt(key, flipped, aad) }
 
         val wrongAad = "secret|id-2".toByteArray()
-        assertThrows(CryptoV2.IntegrityException::class.java) { CryptoV2.gcmDecrypt(key, payload, wrongAad) }
+        assertThrows(Aead.IntegrityException::class.java) { Aead.gcmDecrypt(key, payload, wrongAad) }
 
         // AAD 语义 = 防跨字段/跨条目搬移：同 key 不同 aad 的密文不可互换
-        val p2 = CryptoV2.gcmEncrypt(key, "other".toByteArray(), "account|id-2".toByteArray())
-        assertThrows(CryptoV2.IntegrityException::class.java) {
-            CryptoV2.gcmDecrypt(key, p2, "account|id-1".toByteArray())
+        val p2 = Aead.gcmEncrypt(key, "other".toByteArray(), "account|id-2".toByteArray())
+        assertThrows(Aead.IntegrityException::class.java) {
+            Aead.gcmDecrypt(key, p2, "account|id-1".toByteArray())
         }
     }
 }

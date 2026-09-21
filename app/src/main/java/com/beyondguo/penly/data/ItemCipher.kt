@@ -1,7 +1,7 @@
 package com.beyondguo.penly.data
 
 import com.beyondguo.penly.crypto.CryptoEngine
-import com.beyondguo.penly.crypto.CryptoV2
+import com.beyondguo.penly.crypto.Aead
 import com.beyondguo.penly.crypto.MacVerificationException
 
 /**
@@ -38,7 +38,7 @@ object ItemCipher {
             Field("", "", "")
         } else when (format) {
             VaultMeta.SCHEMA_V3 ->
-                Field(CryptoV2.b64(gcm(field, itemId, plain.toByteArray(Charsets.UTF_8), key, encrypt = true)), "", "")
+                Field(Aead.b64(gcm(field, itemId, plain.toByteArray(Charsets.UTF_8), key, encrypt = true)), "", "")
             else -> {
                 val p = CryptoEngine.aesEncrypt(plain, key)
                 Field(p.dataB64, p.ivB64, CryptoEngine.recordMac(CryptoEngine.macSubKey(key), p.ivB64, p.dataB64))
@@ -53,8 +53,8 @@ object ItemCipher {
         if (enc.isBlank()) return ""
         return when (format) {
             VaultMeta.SCHEMA_V3 -> try {
-                String(gcm(field, itemId, CryptoV2.unb64(enc), key, encrypt = false), Charsets.UTF_8)
-            } catch (_: CryptoV2.IntegrityException) {
+                String(gcm(field, itemId, Aead.unb64(enc), key, encrypt = false), Charsets.UTF_8)
+            } catch (_: Aead.IntegrityException) {
                 throw MacVerificationException()
             }
             else -> {
@@ -68,9 +68,9 @@ object ItemCipher {
 
     /** GCM 收口：子密钥域分离 + AAD 绑定字段与条目 */
     private fun gcm(field: String, itemId: String, data: ByteArray, key: ByteArray, encrypt: Boolean): ByteArray {
-        val sub = CryptoV2.subKey(key, CryptoV2.Domains.ENC_V2)
+        val sub = Aead.subKey(key, Aead.Domains.ENC)
         val aad = "$field|$itemId".toByteArray(Charsets.UTF_8)
-        return if (encrypt) CryptoV2.gcmEncrypt(sub, data, aad) else CryptoV2.gcmDecrypt(sub, data, aad)
+        return if (encrypt) Aead.gcmEncrypt(sub, data, aad) else Aead.gcmDecrypt(sub, data, aad)
     }
 
     // ---------------- 条目级 ----------------

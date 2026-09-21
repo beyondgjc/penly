@@ -8,10 +8,10 @@ import com.beyondguo.penly.backup.BackupData
 import com.beyondguo.penly.backup.BackupFile
 import com.beyondguo.penly.backup.BackupFormatException
 import com.beyondguo.penly.crypto.CryptoEngine
-import com.beyondguo.penly.crypto.CryptoV2
+import com.beyondguo.penly.crypto.Aead
 import com.beyondguo.penly.crypto.KeyUnavailableException
 import com.beyondguo.penly.crypto.KeyWrapper
-import com.beyondguo.penly.crypto.KeystoreEnvelope
+import com.beyondguo.penly.crypto.DoubleEnvelope
 import com.beyondguo.penly.crypto.AndroidKeyStoreWrapper
 import com.beyondguo.penly.crypto.MacVerificationException
 import com.beyondguo.penly.crypto.SessionManager
@@ -328,7 +328,7 @@ class VaultRepository(private val store: VaultStore) {
      * 尝试用 [master] 解开 [slot]。
      *
      * 双格式分派（v5.0 #30）：
-     * - 信封存在 → **唯一门禁 = [KeystoreEnvelope.unseal]**（Argon2id 64MiB + TEE 双因素）。
+     * - 信封存在 → **唯一门禁 = [DoubleEnvelope.unseal]**（Argon2id 64MiB + TEE 双因素）。
      *   PBKDF2 verify 链此时退为槽位间内部校验，不再参与解锁判定——否则双锁并存、
      *   弱锁照用，信封的离线防护形同虚设。
      * - 信封缺失（未启用/存量库）→ 原 PBKDF2 + verifyMaster 链，行为与 v4 完全一致。
@@ -338,7 +338,7 @@ class VaultRepository(private val store: VaultStore) {
         val env = store.readEnvelope(slot)
         if (env != null) {
             return try {
-                TryOutcome(KeystoreEnvelope.unseal(keyWrapper, master.toByteArray(Charsets.UTF_8), env))
+                TryOutcome(DoubleEnvelope.unseal(keyWrapper, master.toByteArray(Charsets.UTF_8), env))
             } catch (e: WrongPasswordException) {
                 TryOutcome(null)
             } catch (e: KeyUnavailableException) {
@@ -430,8 +430,8 @@ class VaultRepository(private val store: VaultStore) {
 
         val auxSecret = readAuxSecret(m, key32) ?: return@withContext "辅助凭证缺失，无法启用"
         val peerKey = CryptoEngine.deriveKeyB64(auxSecret, peerMeta.saltB64)
-        val envReal = KeystoreEnvelope.seal(keyWrapper, master.toByteArray(Charsets.UTF_8), key32)
-        val envPeer = KeystoreEnvelope.seal(keyWrapper, auxSecret.toByteArray(Charsets.UTF_8), peerKey)
+        val envReal = DoubleEnvelope.seal(keyWrapper, master.toByteArray(Charsets.UTF_8), key32)
+        val envPeer = DoubleEnvelope.seal(keyWrapper, auxSecret.toByteArray(Charsets.UTF_8), peerKey)
         peerKey.fill(0)
 
         store.commitSlots {
@@ -1074,7 +1074,7 @@ class VaultRepository(private val store: VaultStore) {
             // 信封已启用：改密必须同步重封真库信封（同一次原子事务）——否则旧密码
             // 派生的 KEK 仍能解开信封，改密等于没改。影子信封不动（影子密码没变）。
             val envNew = if (store.readEnvelope(slot) != null) {
-                KeystoreEnvelope.seal(keyWrapper, newPlain.toByteArray(Charsets.UTF_8), newKey)
+                DoubleEnvelope.seal(keyWrapper, newPlain.toByteArray(Charsets.UTF_8), newKey)
             } else {
                 null
             }
@@ -1390,7 +1390,7 @@ class VaultRepository(private val store: VaultStore) {
         BackupCodecV2.verifyFile(file, sourcePwd)?.let { throw ImportException(it) }
         val entries = try {
             BackupCodecV2.decryptItems(file, sourcePwd)
-        } catch (e: CryptoV2.IntegrityException) {
+        } catch (e: Aead.IntegrityException) {
             // verify 槽位未动但条目密文被篡改：拒绝导入，本地数据不受影响
             throw ImportException("备份完整性校验失败，文件可能已损坏")
         }

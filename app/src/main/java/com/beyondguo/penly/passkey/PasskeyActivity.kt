@@ -44,7 +44,7 @@ import androidx.credentials.exceptions.GetCredentialUnknownException
 import androidx.credentials.provider.PendingIntentHandler
 import androidx.fragment.app.FragmentActivity
 import com.beyondguo.penly.bio.BioManager
-import com.beyondguo.penly.crypto.CryptoV2
+import com.beyondguo.penly.crypto.Aead
 import com.beyondguo.penly.data.UnlockResult
 import com.beyondguo.penly.penly
 import com.beyondguo.penly.ui.theme.PenlyTheme
@@ -130,11 +130,11 @@ class PasskeyActivity : FragmentActivity() {
                                 rpId = info.rpId,
                                 rpName = info.rpName,
                                 userName = info.userName,
-                                userHandleB64 = CryptoV2.b64(
+                                userHandleB64 = Aead.b64(
                                     Base64.getUrlDecoder().decode(info.userIdB64Url),
                                 ),
-                                credIdB64 = CryptoV2.b64(credId),
-                                privPkcs8B64 = CryptoV2.b64(kp.private.encoded),
+                                credIdB64 = Aead.b64(credId),
+                                privPkcs8B64 = Aead.b64(kp.private.encoded),
                             )
                             val cose = WebAuthn.cosePublicKey(kp.public)
                             val authData = WebAuthn.registrationAuthData(info.rpId, credId, cose)
@@ -196,9 +196,9 @@ class PasskeyActivity : FragmentActivity() {
                             // 其 SHA256 经 option.clientDataHash 传入 —— 有则直接对哈希签名，无则回退自构版本
                             val cdHash = pkReq.clientDataHash
                             val sig = if (cdHash != null) {
-                                WebAuthn.signAssertionHash(CryptoV2.unb64(privB64), authData, cdHash)
+                                WebAuthn.signAssertionHash(Aead.unb64(privB64), authData, cdHash)
                             } else {
-                                WebAuthn.signAssertion(CryptoV2.unb64(privB64), authData, cdj)
+                                WebAuthn.signAssertion(Aead.unb64(privB64), authData, cdj)
                             }
                             repo.bumpSignCount(pick.id, newCount)
                             val out = Intent()

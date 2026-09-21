@@ -8,6 +8,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+# 多模块：/build 只匹配根目录，子模块构建产物需单独排除
+build/
 
 # release 签名材料：永不入库（keystore 文件本体存放在仓库外的 release/ 目录）
 *.jks

@@ -25,6 +25,10 @@ pinyin4j = "2.5.1"
 # 扫码录入 2FA 密钥：zxing-android-embedded 自带取景 Activity 与相机权限流程，
 # 单依赖 ~1.5MB，替代 CameraX+ML Kit 重方案（v3.0 项目④ V2）
 zxingEmbedded = "4.3.0"
+# crypto-core（纯 JVM 加密内核，无 Android 依赖）：coroutines 供 KeySession 的
+# unlocked StateFlow；BouncyCastle 与 app 同版本（同一处 Argon2 实现，避免两套代码）。
+coroutines = "1.8.0"
+bouncycastle = "1.78.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -48,9 +52,12 @@ androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
 pinyin4j = { group = "com.belerweb", name = "pinyin4j", version.ref = "pinyin4j" }
 zxing-android-embedded = { group = "com.journeyapps", name = "zxing-android-embedded", version.ref = "zxingEmbedded" }
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

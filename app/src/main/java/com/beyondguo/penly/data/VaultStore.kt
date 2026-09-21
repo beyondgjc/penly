@@ -5,7 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.beyondguo.penly.crypto.KeystoreEnvelope
+import com.beyondguo.penly.crypto.DoubleEnvelope
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -99,20 +99,20 @@ class VaultStore(private val context: Context) {
     // ---------------- v5.0 TEE 信封 ----------------
 
     /** 读取槽位信封；null = 未启用信封（该槽位解锁走 PBKDF2 旧链） */
-    suspend fun readEnvelope(slot: Slot): KeystoreEnvelope.Envelope? {
+    suspend fun readEnvelope(slot: Slot): DoubleEnvelope.Envelope? {
         val raw = context.penlyDataStore.data.first()[envelopeKey(slot)] ?: return null
         return try {
-            json.decodeFromString(KeystoreEnvelope.Envelope.serializer(), raw)
+            json.decodeFromString(DoubleEnvelope.Envelope.serializer(), raw)
         } catch (_: Exception) {
             null
         }
     }
 
     /** 信封独立写入（enableEnvelope 之外的场景一般不该用——信封变更必须进 commitSlots 事务） */
-    suspend fun writeEnvelope(slot: Slot, envelope: KeystoreEnvelope.Envelope?) {
+    suspend fun writeEnvelope(slot: Slot, envelope: DoubleEnvelope.Envelope?) {
         context.penlyDataStore.edit { p ->
             if (envelope == null) p.remove(envelopeKey(slot))
-            else p[envelopeKey(slot)] = json.encodeToString(KeystoreEnvelope.Envelope.serializer(), envelope)
+            else p[envelopeKey(slot)] = json.encodeToString(DoubleEnvelope.Envelope.serializer(), envelope)
         }
     }
 
@@ -251,7 +251,7 @@ class VaultStore(private val context: Context) {
             slot: Slot,
             meta: VaultMeta? = null,
             items: List<VaultItem>? = null,
-            envelope: KeystoreEnvelope.Envelope? = null,
+            envelope: DoubleEnvelope.Envelope? = null,
         ) {
             require(meta != null || items != null || envelope != null) {
                 "write(${slot.name}) 的 meta / items / envelope 不能同时为空"
@@ -262,7 +262,7 @@ class VaultStore(private val context: Context) {
             }
             val metaJson = meta?.let { json.encodeToString(VaultMeta.serializer(), it) }
             val itemsJson = items?.let { json.encodeToString(ListSerializer(VaultItem.serializer()), it) }
-            val envJson = envelope?.let { json.encodeToString(KeystoreEnvelope.Envelope.serializer(), it) }
+            val envJson = envelope?.let { json.encodeToString(DoubleEnvelope.Envelope.serializer(), it) }
             writes[slot] = SlotWrite(metaJson, itemsJson, envJson, dropEnvelope = false)
         }
 

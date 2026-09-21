@@ -1,6 +1,5 @@
-package com.beyondguo.penly
+package com.beyondguo.penly.crypto
 
-import com.beyondguo.penly.crypto.Totp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue

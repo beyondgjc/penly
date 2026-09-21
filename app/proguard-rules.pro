@@ -81,6 +81,12 @@
 # 逐成员钉不可穷尽（方法也能被收窄），故测试直连的自家包整包 keep：
 # 原名 + 签名冻结。范围 = 全部设备测试 import 的自家包 + PenlyApp
 # （app.repo 等属性访问也走原名 getter）。
+#
+# ⚠️ crypto 包跨模块（2026-09-21）：加密内核已抽到 :crypto-core 模块，
+# 但**包名保持 com.beyondguo.penly.crypto**，故本条规则按包名匹配、
+# 同时覆盖 app 侧（AndroidKeyStoreWrapper/SessionManager）与 core jar 侧
+# （Aead/DoubleEnvelope/KeyWrapper/KeySession/Shamir/Totp/CryptoEngine）——
+# R8 的 -keep 按包名作用，不区分来源模块。**包名一旦改动，本条必须同步。**
 -keep class com.beyondguo.penly.PenlyApp { *; }
 -keep class com.beyondguo.penly.data.** { *; }
 -keep class com.beyondguo.penly.crypto.** { *; }

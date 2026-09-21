@@ -12,24 +12,10 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * 密钥包装器：信封层（[KeystoreEnvelope]）与具体保护介质之间的接缝。
+ * [KeyWrapper] 的 AndroidKeyStore 实现：wrapKey 生成于 TEE（可选 StrongBox），永不导出。
  *
- * 两个实现：
- * - [AndroidKeyStoreWrapper]：TEE/StrongBox 硬件保护（生产）
- * - 测试目录的软件实现：JVM 单测逻辑（不入生产）
- *
- * 载荷格式与 [CryptoV2] 一致：nonce(12B) || ciphertext || tag(16B)。
- */
-interface KeyWrapper {
-    /** 持久化时标识包装来源（恢复流程需要区分 TEE 信封与降级信封） */
-    val tag: String
-
-    fun wrap(plaintext: ByteArray, aad: ByteArray): ByteArray
-    fun unwrap(payload: ByteArray, aad: ByteArray): ByteArray
-}
-
-/**
- * AndroidKeyStore 实现：wrapKey 生成于 TEE（可选 StrongBox），永不导出。
+ * 留在 app 模块（不进 crypto-core）——它依赖 `android.security.keystore`，
+ * 而 core 必须保持纯 JVM。这是 core 与平台之间那条接缝的另一半。
  *
  * 失效语义（严格双因素）：
  * - 换机 / 恢复出厂 → TEE 密钥销毁 → 信封永久不可解 → 唯一出路 = 备份恢复
@@ -77,7 +63,7 @@ class AndroidKeyStoreWrapper(
     }
 
     override fun unwrap(payload: ByteArray, aad: ByteArray): ByteArray {
-        if (payload.size <= 12) throw CryptoV2.IntegrityException()
+        if (payload.size <= 12) throw Aead.IntegrityException()
         val nonce = payload.copyOfRange(0, 12)
         val ct = payload.copyOfRange(12, payload.size)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -88,7 +74,7 @@ class AndroidKeyStoreWrapper(
         } catch (e: StrongBoxUnavailableException) {
             throw e
         } catch (e: Exception) {
-            throw CryptoV2.IntegrityException()
+            throw Aead.IntegrityException()
         }
     }
 
