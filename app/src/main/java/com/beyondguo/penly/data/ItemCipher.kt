@@ -2,6 +2,7 @@ package com.beyondguo.penly.data
 
 import com.beyondguo.penly.crypto.CryptoEngine
 import com.beyondguo.penly.crypto.Aead
+import com.beyondguo.penly.crypto.FieldCipher
 import com.beyondguo.penly.crypto.MacVerificationException
 
 /**
@@ -12,6 +13,11 @@ import com.beyondguo.penly.crypto.MacVerificationException
  * - [VaultMeta.SCHEMA_V3]（v5.0 起）：AES-256-GCM 逐字段，子密钥 = HKDF(key, "yinji-enc-v2")，
  *   AAD = "字段名|条目id"——**与契约 v2 备份文件完全同构**（防密文跨字段/跨条目搬移，
  *   v1 MAC 四元组的拼装攻击面在 GCM 格式下由 AAD 收口）。
+ *
+ * 本类是 SDK [FieldCipher] 的**业务适配层**：FieldCipher 提供「key + AAD + 明文」的
+ * 通用字段级原语，本类负责把 VaultItem 的五个具名字段、V2/V3 双格式分派、
+ * CBC 四元组载体（iv/mac 槽位）套在它之上。V3（GCM）路径已全部委托 FieldCipher，
+ * 因此「印迹记录」等其他宿主复用 SDK 时不需要重新实现这套收口逻辑。
  *
  * 通用语义：
  * - 字段空串 = 无内容，两格式一致，不参与加解密；
@@ -38,7 +44,7 @@ object ItemCipher {
             Field("", "", "")
         } else when (format) {
             VaultMeta.SCHEMA_V3 ->
-                Field(Aead.b64(gcm(field, itemId, plain.toByteArray(Charsets.UTF_8), key, encrypt = true)), "", "")
+                Field(FieldCipher.seal(key, FieldCipher.aad(field, itemId), plain.toByteArray(Charsets.UTF_8)), "", "")
             else -> {
                 val p = CryptoEngine.aesEncrypt(plain, key)
                 Field(p.dataB64, p.ivB64, CryptoEngine.recordMac(CryptoEngine.macSubKey(key), p.ivB64, p.dataB64))
@@ -52,11 +58,8 @@ object ItemCipher {
     fun decField(format: Int, field: String, itemId: String, enc: String, iv: String, mac: String, key: ByteArray): String {
         if (enc.isBlank()) return ""
         return when (format) {
-            VaultMeta.SCHEMA_V3 -> try {
-                String(gcm(field, itemId, Aead.unb64(enc), key, encrypt = false), Charsets.UTF_8)
-            } catch (_: Aead.IntegrityException) {
-                throw MacVerificationException()
-            }
+            VaultMeta.SCHEMA_V3 ->
+                String(FieldCipher.openOrThrowMac(key, FieldCipher.aad(field, itemId), enc), Charsets.UTF_8)
             else -> {
                 if (!CryptoEngine.verifyRecordMac(CryptoEngine.macSubKey(key), iv, enc, mac)) {
                     throw MacVerificationException()
@@ -66,12 +69,9 @@ object ItemCipher {
         }
     }
 
-    /** GCM 收口：子密钥域分离 + AAD 绑定字段与条目 */
-    private fun gcm(field: String, itemId: String, data: ByteArray, key: ByteArray, encrypt: Boolean): ByteArray {
-        val sub = Aead.subKey(key, Aead.Domains.ENC)
-        val aad = "$field|$itemId".toByteArray(Charsets.UTF_8)
-        return if (encrypt) Aead.gcmEncrypt(sub, data, aad) else Aead.gcmDecrypt(sub, data, aad)
-    }
+    // GCM 的「子密钥域分离 + AAD 绑定字段与条目」已收口到 SDK 的 FieldCipher
+    // （原先这里是私有 gcm() 函数；Phase 1 起 V3 路径一律走 FieldCipher.*，
+    //  本类只保留 CBC(V2) 路径与 VaultItem 结构适配）。
 
     // ---------------- 条目级 ----------------
 
@@ -134,6 +134,13 @@ object ItemCipher {
      * 全量重加密（改密 / 存储格式迁移共用）：逐条按旧格式解密（完整性失败即抛
      * [MacVerificationException] 中止整体）→ 按新格式重加密。同格式调用 = 换密钥，
      * 异格式调用（V2→V3）= 纯格式迁移。
+     *
+     * **为什么这条循环仍留在这里、而没有委托 [FieldCipher.reEncryptRecord]：**
+     * 那条泛型入口按 `字段名 → 密文` 的 Map 工作，而本方法必须处理
+     * `[VaultItem]` 的 CBC 四元组载体（enc/iv/mac 三个平行列，V3 下 iv/mac 恒空）。
+     * 套用 Map 版需要「五字段 ↔ Map」两次来回转换，比现在的直白写法**更复杂也更易错**。
+     * 因此分工是：**V3(GCM) 的字段级原语收口到 FieldCipher，条目级结构适配留在本类**。
+     * 通用入口 [FieldCipher.reEncryptRecord] 保留给不含 CBC 包袱的新宿主使用。
      */
     fun reEncryptItems(
         items: List<VaultItem>,
