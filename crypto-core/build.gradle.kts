@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)
+    id("maven-publish")
 }
 
 /**
@@ -32,4 +33,31 @@ dependencies {
 tasks.withType<Test>().configureEach {
     // 固定向量测试里有 Argon2id 64MiB 档（KEK 强度验证），需要稍多堆内存
     maxHeapSize = "1g"
+}
+
+tasks.jar {
+    from(rootProject.file("LICENSE")) {
+        into("META-INF")
+    }
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("cryptoCore") {
+            groupId = "com.beyondguo.penly"
+            artifactId = "crypto-core"
+            version = "0.1.0"
+            from(components["java"])
+            pom {
+                name.set("Penly Crypto Core")
+                description.set("Reusable JVM cryptography core for Penly and Imprints")
+                licenses {
+                    license {
+                        name.set("Apache License, Version 2.0")
+                        url.set("https://www.apache.org/licenses/LICENSE-2.0")
+                    }
+                }
+            }
+        }
+    }
 }
